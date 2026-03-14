@@ -59,11 +59,11 @@ export async function POST(request: NextRequest) {
     const { operadorId } = body
 
     // Obtener el máximo número existente para generar el correlativo
-    const ultimaLista = await db.listaFaena.findFirst({
-      orderBy: { numero: 'desc' },
-      select: { numero: true }
+    // Usar agregación para obtener el máximo número
+    const maxResult = await db.listaFaena.aggregate({
+      _max: { numero: true }
     })
-    const nuevoNumero = (ultimaLista?.numero || 0) + 1
+    const nuevoNumero = (maxResult._max.numero || 0) + 1
 
     const lista = await db.listaFaena.create({
       data: {

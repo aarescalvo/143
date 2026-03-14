@@ -424,6 +424,42 @@ Corregir Stock por Corrales y Lista de Faena
 - El sistema está operativo con las correcciones aplicadas
 
 ---
+## Task ID: 82
+### Work Task
+Corregir problemas de Pesaje Individual (refresh inesperado) y Lista de Faena (error al crear)
+
+### Work Log:
+- **Problema 1 - Pesaje Individual (refresh inesperado)**:
+  * Al registrar un peso, la pantalla se ponía en blanco y mostraba el logo de login
+  * Causa: La función `imprimirRotulo` abría un popup con `window.open` que podía causar problemas
+  * El script del popup (`window.print()` + `window.close()`) podía interferir con la página principal
+  * **Solución implementada**:
+    - Agregado `try-catch` para manejar errores sin interrumpir el flujo
+    - Agregado `setTimeout` para no bloquear el hilo principal
+    - Agregado `noopener,noreferrer` en las opciones del popup
+    - Agregado `window.focus()` para devolver el foco a la página principal
+    - Agregados delays en la impresión y cierre del popup
+    - Mejorada la estructura del HTML del rótulo
+
+- **Problema 2 - Lista de Faena (error al crear)**:
+  * Error al intentar crear una nueva lista de faena
+  * La API usaba `findFirst({ orderBy: { numero: 'desc' } })` que podía fallar
+  * **Solución implementada**:
+    - Cambiado a `aggregate({ _max: { numero: true } })` para obtener el máximo número
+    - Método más robusto para generar números correlativos
+    - Maneja correctamente el caso cuando no hay listas existentes
+
+### Verificaciones:
+- Lint: Sin errores ✓
+- Dev server: Funcionando correctamente ✓
+- APIs: Todas respondiendo correctamente ✓
+
+### Stage Summary:
+- **Pesaje Individual**: Mejorada la función de impresión para evitar refresh inesperado
+- **Lista de Faena**: Corregida la API para crear listas sin errores
+- El sistema está operativo con las correcciones aplicadas
+
+---
 ## Task ID: 81
 ### Work Task
 Corregir errores adicionales: Stock Corrales y Lista de Faena

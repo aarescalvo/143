@@ -485,89 +485,102 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
 
   // Rótulo de 10x5 cm con código de barras (solo en impresión)
   const imprimirRotulo = (animal: Animal) => {
-    const printWindow = window.open('', '_blank', 'width=400,height=250')
-    if (printWindow) {
-      printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <title>Rótulo ${animal.codigo}</title>
-          <style>
-            @page { size: 10cm 5cm; margin: 0; }
-            body { 
-              font-family: Arial, sans-serif; 
-              padding: 3mm; 
-              width: 10cm;
-              height: 5cm;
-              box-sizing: border-box;
-              margin: 0;
-            }
-            .rotulo {
-              border: 3px solid black;
-              padding: 3mm;
-              height: 100%;
-              box-sizing: border-box;
-              display: flex;
-              flex-direction: column;
-              justify-content: space-between;
-            }
-            .header {
-              text-align: center;
-              font-size: 14px;
-              font-weight: bold;
-              border-bottom: 2px solid black;
-              padding-bottom: 2mm;
-            }
-            .content {
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-              flex: 1;
-            }
-            .numero-animal {
-              font-size: 48px;
-              font-weight: bold;
-              text-align: center;
-              line-height: 1;
-            }
-            .datos {
-              text-align: right;
-              font-size: 12px;
-            }
-            .datos div {
-              margin: 1mm 0;
-            }
-            .barcode {
-              text-align: center;
-              font-family: 'Libre Barcode 39', cursive;
-              font-size: 24px;
-              letter-spacing: 2px;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="rotulo">
-            <div class="header">SOLEMAR ALIMENTARIA</div>
-            <div class="content">
-              <div class="numero-animal">${animal.numero}</div>
-              <div class="datos">
-                <div><strong>Tropa:</strong> ${tropaSeleccionada?.codigo || ''}</div>
-                <div><strong>Tipo:</strong> ${animal.tipoAnimal}</div>
-                <div><strong>Peso:</strong> ${animal.pesoVivo?.toLocaleString()} kg</div>
-              </div>
-            </div>
-            <div class="barcode">*${animal.codigo}*</div>
-          </div>
-          <script>
-            window.onload = function() { 
-              window.print(); 
-              window.onafterprint = function() { window.close(); } 
-            }
-          </script>
-        </body>
-        </html>
-      `)
-      printWindow.document.close()
+    try {
+      // Usar setTimeout para no bloquear el hilo principal
+      setTimeout(() => {
+        const printWindow = window.open('', '_blank', 'width=400,height=250,noopener,noreferrer')
+        if (printWindow) {
+          const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Rótulo ${animal.codigo}</title>
+  <style>
+    @page { size: 10cm 5cm; margin: 0; }
+    body { 
+      font-family: Arial, sans-serif; 
+      padding: 3mm; 
+      width: 10cm;
+      height: 5cm;
+      box-sizing: border-box;
+      margin: 0;
+    }
+    .rotulo {
+      border: 3px solid black;
+      padding: 3mm;
+      height: 100%;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .header {
+      text-align: center;
+      font-size: 14px;
+      font-weight: bold;
+      border-bottom: 2px solid black;
+      padding-bottom: 2mm;
+    }
+    .content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex: 1;
+    }
+    .numero-animal {
+      font-size: 48px;
+      font-weight: bold;
+      text-align: center;
+      line-height: 1;
+    }
+    .datos {
+      text-align: right;
+      font-size: 12px;
+    }
+    .datos div {
+      margin: 1mm 0;
+    }
+    .barcode {
+      text-align: center;
+      font-family: 'Libre Barcode 39', cursive;
+      font-size: 24px;
+      letter-spacing: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="rotulo">
+    <div class="header">SOLEMAR ALIMENTARIA</div>
+    <div class="content">
+      <div class="numero-animal">${animal.numero}</div>
+      <div class="datos">
+        <div><strong>Tropa:</strong> ${tropaSeleccionada?.codigo || ''}</div>
+        <div><strong>Tipo:</strong> ${animal.tipoAnimal}</div>
+        <div><strong>Peso:</strong> ${animal.pesoVivo?.toLocaleString()} kg</div>
+      </div>
+    </div>
+    <div class="barcode">*${animal.codigo}*</div>
+  </div>
+  <script>
+    (function() {
+      setTimeout(function() {
+        window.print();
+      }, 100);
+      window.onafterprint = function() { 
+        setTimeout(function() { window.close(); }, 100);
+      };
+    })();
+  </script>
+</body>
+</html>`
+          printWindow.document.write(htmlContent)
+          printWindow.document.close()
+          // Devolver el foco a la ventana principal
+          window.focus()
+        }
+      }, 50)
+    } catch (error) {
+      console.error('Error al imprimir rótulo:', error)
+      // No interrumpir el flujo principal si hay error de impresión
     }
   }
 
