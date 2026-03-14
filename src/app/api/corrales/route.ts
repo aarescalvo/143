@@ -1,36 +1,80 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-// GET - Listar corrales
+// GET - Listar corrales con stock basado en animales individuales
 export async function GET(request: NextRequest) {
   try {
+    // Obtener todos los corrales
     const corrales = await db.corral.findMany({
-      orderBy: { nombre: 'asc' },
+      where: { activo: true },
+      orderBy: { nombre: 'asc' }
+    })
+
+    // Obtener animales con su ubicación real (animal.corralId)
+    const animales = await db.animal.findMany({
+      where: {
+        estado: { in: ['RECIBIDO', 'PESADO'] }
+      },
       include: {
-        tropas: {
-          where: {
-            estado: { in: ['RECIBIDO', 'EN_CORRAL', 'EN_PESAJE', 'PESADO', 'LISTO_FAENA'] }
-          },
-          select: {
-            id: true,
-            codigo: true,
-            especie: true,
-            cantidadCabezas: true,
-            estado: true
+        tropa: {
+          include: {
+            usuarioFaena: { select: { nombre: true } }
           }
         }
       }
     })
-    
-    // Calcular stock actual por corral
+
+    // Agrupar animales por corral
+    const stockPorCorral: Record<string, {
+      bovinos: number
+      equinos: number
+      tropas: Map<string, {
+        tropaId: string
+        tropaCodigo: string
+        cantidad: number
+        especie: string
+        usuarioFaena: string
+      }>
+    }> = {}
+
+    for (const animal of animales) {
+      const corralId = animal.corralId || 'sin-corral'
+      
+      if (!stockPorCorral[corralId]) {
+        stockPorCorral[corralId] = { 
+          bovinos: 0, 
+          equinos: 0, 
+          tropas: new Map() 
+        }
+      }
+
+      // Contar por especie
+      if (animal.tropa.especie === 'BOVINO') {
+        stockPorCorral[corralId].bovinos++
+      } else if (animal.tropa.especie === 'EQUINO') {
+        stockPorCorral[corralId].equinos++
+      }
+
+      // Agrupar por tropa
+      const tropaId = animal.tropaId
+      if (!stockPorCorral[corralId].tropas.has(tropaId)) {
+        stockPorCorral[corralId].tropas.set(tropaId, {
+          tropaId: animal.tropa.id,
+          tropaCodigo: animal.tropa.codigo,
+          cantidad: 1,
+          especie: animal.tropa.especie,
+          usuarioFaena: animal.tropa.usuarioFaena?.nombre || 'Sin usuario'
+        })
+      } else {
+        const tropaData = stockPorCorral[corralId].tropas.get(tropaId)!
+        tropaData.cantidad++
+      }
+    }
+
+    // Construir respuesta
     const corralesConStock = corrales.map(corral => {
-      const tropasActivas = corral.tropas
-      const stockBovinos = tropasActivas
-        .filter(t => t.especie === 'BOVINO')
-        .reduce((acc, t) => acc + t.cantidadCabezas, 0)
-      const stockEquinos = tropasActivas
-        .filter(t => t.especie === 'EQUINO')
-        .reduce((acc, t) => acc + t.cantidadCabezas, 0)
+      const stock = stockPorCorral[corral.id] || { bovinos: 0, equinos: 0, tropas: new Map() }
+      const stockTotal = stock.bovinos + stock.equinos
       
       return {
         id: corral.id,
@@ -38,14 +82,34 @@ export async function GET(request: NextRequest) {
         capacidad: corral.capacidad,
         observaciones: corral.observaciones,
         activo: corral.activo,
-        stockBovinos,
-        stockEquinos,
-        stockTotal: stockBovinos + stockEquinos,
-        disponible: corral.capacidad - stockBovinos - stockEquinos,
-        tropasActivas: tropasActivas.length,
-        tropas: tropasActivas
+        stockBovinos: stock.bovinos,
+        stockEquinos: stock.equinos,
+        stockTotal,
+        disponible: corral.capacidad - stockTotal,
+        tropasActivas: stock.tropas.size,
+        tropas: Array.from(stock.tropas.values())
       }
     })
+
+    // Agregar animales sin corral asignado
+    if (stockPorCorral['sin-corral']) {
+      const sinCorral = stockPorCorral['sin-corral']
+      const stockTotal = sinCorral.bovinos + sinCorral.equinos
+      
+      corralesConStock.push({
+        id: 'sin-corral',
+        nombre: 'Sin Asignar',
+        capacidad: 0,
+        observaciones: 'Animales sin corral asignado',
+        activo: true,
+        stockBovinos: sinCorral.bovinos,
+        stockEquinos: sinCorral.equinos,
+        stockTotal,
+        disponible: 0,
+        tropasActivas: sinCorral.tropas.size,
+        tropas: Array.from(sinCorral.tropas.values())
+      })
+    }
     
     return NextResponse.json({
       success: true,

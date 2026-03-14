@@ -375,7 +375,7 @@ export function MovimientoHaciendaModule({ operador }: { operador: Operador }) {
                               <div className="space-y-2 mb-3">
                                 {corral.tropas.map((tropa) => (
                                   <div 
-                                    key={tropa.tropaId} 
+                                    key={`${corral.id}-${tropa.tropaId}`}
                                     className="flex items-center justify-between bg-white rounded px-2 py-1.5 text-sm"
                                   >
                                     <div>
