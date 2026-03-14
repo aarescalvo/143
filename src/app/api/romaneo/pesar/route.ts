@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-// POST - Registrar pesaje de media res
+// POST - Registrar pesaje de media res (con transacción para multi-usuario)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -44,139 +44,132 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validar que el operador existe (si se proporciona)
-    let validOperadorId: string | null = null
-    if (operadorId) {
-      const operadorExists = await db.operador.findUnique({
-        where: { id: operadorId }
-      })
-      if (operadorExists) {
-        validOperadorId = operadorId
-      } else {
-        console.log('Operador no encontrado, usando null:', operadorId)
-      }
-    }
-
-    // Validar que el tipificador existe (si se proporciona)
-    let validTipificadorId: string | null = null
-    if (tipificadorId) {
-      const tipificadorExists = await db.tipificador.findUnique({
-        where: { id: tipificadorId }
-      })
-      if (tipificadorExists) {
-        validTipificadorId = tipificadorId
-      } else {
-        console.log('Tipificador no encontrado, usando null:', tipificadorId)
-      }
-    }
-
-    // Buscar la asignación del garrón para hoy
-    const hoy = new Date()
-    hoy.setHours(0, 0, 0, 0)
-
-    const asignacion = await db.asignacionGarron.findFirst({
-      where: {
-        garron: parseInt(garron),
-        horaIngreso: {
-          gte: hoy,
-          lt: new Date(hoy.getTime() + 24 * 60 * 60 * 1000)
+    // USAR TRANSACCIÓN para evitar race conditions en multi-usuario
+    const result = await db.$transaction(async (tx) => {
+      // Validar que el operador existe (si se proporciona)
+      let validOperadorId: string | null = null
+      if (operadorId) {
+        const operadorExists = await tx.operador.findUnique({
+          where: { id: operadorId }
+        })
+        if (operadorExists) {
+          validOperadorId = operadorId
         }
-      },
-      include: {
-        animal: {
-          include: {
-            tropa: true,
-            pesajeIndividual: true
+      }
+
+      // Validar que el tipificador existe (si se proporciona)
+      let validTipificadorId: string | null = null
+      if (tipificadorId) {
+        const tipificadorExists = await tx.tipificador.findUnique({
+          where: { id: tipificadorId }
+        })
+        if (tipificadorExists) {
+          validTipificadorId = tipificadorId
+        }
+      }
+
+      // Buscar la asignación del garrón para hoy
+      const hoy = new Date()
+      hoy.setHours(0, 0, 0, 0)
+
+      const asignacion = await tx.asignacionGarron.findFirst({
+        where: {
+          garron: parseInt(garron),
+          horaIngreso: {
+            gte: hoy,
+            lt: new Date(hoy.getTime() + 24 * 60 * 60 * 1000)
+          }
+        },
+        include: {
+          animal: {
+            include: {
+              tropa: true,
+              pesajeIndividual: true
+            }
           }
         }
-      }
-    })
-
-    console.log('Asignación encontrada:', asignacion ? `ID: ${asignacion.id}` : 'No encontrada')
-
-    // Verificar si ya existe romaneo para este garrón
-    let romaneo = await db.romaneo.findFirst({
-      where: { garron: parseInt(garron) },
-      include: { mediasRes: true }
-    })
-
-    if (!romaneo) {
-      // Crear nuevo romaneo
-      const animal = asignacion?.animal
-      
-      console.log('Creando nuevo romaneo con datos:', {
-        garron: parseInt(garron),
-        tropaCodigo: animal?.tropa?.codigo || asignacion?.tropaCodigo,
-        numeroAnimal: animal?.numero || asignacion?.animalNumero,
-        pesoVivo: animal?.pesoVivo || animal?.pesajeIndividual?.peso || asignacion?.pesoVivo
       })
 
-      romaneo = await db.romaneo.create({
-        data: {
-          garron: parseInt(garron),
-          tropaCodigo: animal?.tropa?.codigo || asignacion?.tropaCodigo || null,
-          numeroAnimal: animal?.numero || asignacion?.animalNumero || null,
-          tipoAnimal: (animal?.tipoAnimal || asignacion?.tipoAnimal) as any || null,
-          pesoVivo: animal?.pesoVivo || animal?.pesajeIndividual?.peso || asignacion?.pesoVivo || null,
-          denticion: denticion || null,
-          tipificadorId: validTipificadorId,
-          operadorId: validOperadorId,
-          estado: 'PENDIENTE'
-        },
+      console.log('Asignación encontrada:', asignacion ? `ID: ${asignacion.id}` : 'No encontrada')
+
+      // Verificar si ya existe romaneo para este garrón
+      let romaneo = await tx.romaneo.findFirst({
+        where: { garron: parseInt(garron) },
         include: { mediasRes: true }
       })
-      
-      console.log('Romaneo creado:', romaneo.id)
-    }
 
-    // Actualizar dentición si se proporciona
-    if (denticion) {
-      await db.romaneo.update({
-        where: { id: romaneo.id },
-        data: { denticion, tipificadorId }
+      if (!romaneo) {
+        // Crear nuevo romaneo
+        const animal = asignacion?.animal
+        
+        console.log('Creando nuevo romaneo con datos:', {
+          garron: parseInt(garron),
+          tropaCodigo: animal?.tropa?.codigo || asignacion?.tropaCodigo,
+          numeroAnimal: animal?.numero || asignacion?.animalNumero,
+          pesoVivo: animal?.pesoVivo || animal?.pesajeIndividual?.peso || asignacion?.pesoVivo
+        })
+
+        romaneo = await tx.romaneo.create({
+          data: {
+            garron: parseInt(garron),
+            tropaCodigo: animal?.tropa?.codigo || asignacion?.tropaCodigo || null,
+            numeroAnimal: animal?.numero || asignacion?.animalNumero || null,
+            tipoAnimal: (animal?.tipoAnimal || asignacion?.tipoAnimal) as any || null,
+            pesoVivo: animal?.pesoVivo || animal?.pesajeIndividual?.peso || asignacion?.pesoVivo || null,
+            denticion: denticion || null,
+            tipificadorId: validTipificadorId,
+            operadorId: validOperadorId,
+            estado: 'PENDIENTE'
+          },
+          include: { mediasRes: true }
+        })
+        
+        console.log('Romaneo creado:', romaneo.id)
+      }
+
+      // Actualizar dentición si se proporciona
+      if (denticion) {
+        await tx.romaneo.update({
+          where: { id: romaneo.id },
+          data: { denticion, tipificadorId: validTipificadorId }
+        })
+      }
+
+      // Verificar si ya existe esta media (dentro de la transacción para evitar duplicados)
+      const mediaExistente = await tx.mediaRes.findFirst({
+        where: {
+          romaneoId: romaneo.id,
+          lado: lado as 'IZQUIERDA' | 'DERECHA'
+        }
       })
-    }
 
-    // Verificar si ya existe esta media
-    const mediaExistente = await db.mediaRes.findFirst({
-      where: {
-        romaneoId: romaneo.id,
-        lado: lado as 'IZQUIERDA' | 'DERECHA'
+      if (mediaExistente) {
+        throw new Error(`MEDIA_YA_EXISTE:${lado}:${garron}`)
       }
-    })
 
-    if (mediaExistente) {
-      console.log('Media ya existe:', mediaExistente.id)
-      return NextResponse.json(
-        { success: false, error: `Ya existe media ${lado.toLowerCase()} para el garrón ${garron}` },
-        { status: 400 }
-      )
-    }
+      // Generar código para la media
+      const fecha = new Date()
+      const codigoBase = `${fecha.getFullYear().toString().slice(-2)}${(fecha.getMonth() + 1).toString().padStart(2, '0')}${fecha.getDate().toString().padStart(2, '0')}-${garron.toString().padStart(4, '0')}-${lado.charAt(0)}`
 
-    // Generar código para la media
-    const fecha = new Date()
-    const codigoBase = `${fecha.getFullYear().toString().slice(-2)}${(fecha.getMonth() + 1).toString().padStart(2, '0')}${fecha.getDate().toString().padStart(2, '0')}-${garron.toString().padStart(4, '0')}-${lado.charAt(0)}`
+      // Crear la media res
+      const mediaRes = await tx.mediaRes.create({
+        data: {
+          romaneoId: romaneo.id,
+          lado: lado as 'IZQUIERDA' | 'DERECHA',
+          sigla: 'A', // Por defecto A
+          peso: pesoNum,
+          codigo: `${codigoBase}-A`,
+          estado: 'EN_CAMARA',
+          camaraId
+        }
+      })
 
-    // Crear la media res
-    const mediaRes = await db.mediaRes.create({
-      data: {
-        romaneoId: romaneo.id,
-        lado: lado as 'IZQUIERDA' | 'DERECHA',
-        sigla: 'A', // Por defecto A
-        peso: pesoNum,
-        codigo: `${codigoBase}-A`,
-        estado: 'EN_CAMARA',
-        camaraId
-      }
-    })
+      console.log('MediaRes creada:', mediaRes.id)
 
-    console.log('MediaRes creada:', mediaRes.id)
-
-    // Actualizar stock de la cámara
-    try {
+      // Actualizar stock de la cámara
       const tropaCodigo = romaneo.tropaCodigo || 'SIN-TROPA'
       
-      const stockExistente = await db.stockMediaRes.findFirst({
+      const stockExistente = await tx.stockMediaRes.findFirst({
         where: {
           camaraId,
           tropaCodigo,
@@ -185,7 +178,7 @@ export async function POST(request: NextRequest) {
       })
 
       if (stockExistente) {
-        await db.stockMediaRes.update({
+        await tx.stockMediaRes.update({
           where: { id: stockExistente.id },
           data: {
             cantidad: { increment: 1 },
@@ -194,7 +187,7 @@ export async function POST(request: NextRequest) {
         })
         console.log('Stock actualizado:', stockExistente.id)
       } else {
-        const nuevoStock = await db.stockMediaRes.create({
+        const nuevoStock = await tx.stockMediaRes.create({
           data: {
             camaraId,
             tropaCodigo,
@@ -205,14 +198,9 @@ export async function POST(request: NextRequest) {
         })
         console.log('Stock creado:', nuevoStock.id)
       }
-    } catch (stockError) {
-      console.error('Error actualizando stock:', stockError)
-      // No fallar el pesaje por error de stock
-    }
 
-    // Registrar movimiento de cámara
-    try {
-      await db.movimientoCamara.create({
+      // Registrar movimiento de cámara
+      await tx.movimientoCamara.create({
         data: {
           camaraDestinoId: camaraId,
           producto: 'Media Res',
@@ -225,82 +213,93 @@ export async function POST(request: NextRequest) {
         }
       })
       console.log('Movimiento de cámara registrado')
-    } catch (movError) {
-      console.error('Error registrando movimiento:', movError)
-      // No fallar el pesaje por error de movimiento
-    }
 
-    // Actualizar asignación del garrón
-    if (asignacion) {
-      if (lado === 'DERECHA') {
-        await db.asignacionGarron.update({
-          where: { id: asignacion.id },
-          data: { tieneMediaDer: true }
-        })
-      } else {
-        await db.asignacionGarron.update({
-          where: { id: asignacion.id },
-          data: { tieneMediaIzq: true }
-        })
-      }
-    }
-
-    // Verificar si ya tiene ambas medias
-    const todasLasMedias = await db.mediaRes.findMany({
-      where: { romaneoId: romaneo.id }
-    })
-
-    console.log('Total medias:', todasLasMedias.length)
-
-    // Si tiene ambas medias, actualizar romaneo con totales
-    if (todasLasMedias.length === 2) {
-      const mediaIzq = todasLasMedias.find(m => m.lado === 'IZQUIERDA')
-      const mediaDer = todasLasMedias.find(m => m.lado === 'DERECHA')
-      
-      if (mediaIzq && mediaDer) {
-        const pesoTotal = mediaIzq.peso + mediaDer.peso
-        const rinde = romaneo.pesoVivo ? (pesoTotal / romaneo.pesoVivo) * 100 : null
-
-        await db.romaneo.update({
-          where: { id: romaneo.id },
-          data: {
-            pesoMediaIzq: mediaIzq.peso,
-            pesoMediaDer: mediaDer.peso,
-            pesoTotal,
-            rinde,
-            estado: 'CONFIRMADO'
-          }
-        })
-
-        // Marcar asignación como completada
-        if (asignacion) {
-          await db.asignacionGarron.update({
+      // Actualizar asignación del garrón
+      if (asignacion) {
+        if (lado === 'DERECHA') {
+          await tx.asignacionGarron.update({
             where: { id: asignacion.id },
-            data: { completado: true }
+            data: { tieneMediaDer: true }
+          })
+        } else {
+          await tx.asignacionGarron.update({
+            where: { id: asignacion.id },
+            data: { tieneMediaIzq: true }
           })
         }
-        
-        console.log('Romaneo completado con ambas medias')
       }
-    }
+
+      // Verificar si ya tiene ambas medias
+      const todasLasMedias = await tx.mediaRes.findMany({
+        where: { romaneoId: romaneo.id }
+      })
+
+      console.log('Total medias:', todasLasMedias.length)
+
+      // Si tiene ambas medias, actualizar romaneo con totales
+      if (todasLasMedias.length === 2) {
+        const mediaIzq = todasLasMedias.find(m => m.lado === 'IZQUIERDA')
+        const mediaDer = todasLasMedias.find(m => m.lado === 'DERECHA')
+        
+        if (mediaIzq && mediaDer) {
+          const pesoTotal = mediaIzq.peso + mediaDer.peso
+          const rinde = romaneo.pesoVivo ? (pesoTotal / romaneo.pesoVivo) * 100 : null
+
+          await tx.romaneo.update({
+            where: { id: romaneo.id },
+            data: {
+              pesoMediaIzq: mediaIzq.peso,
+              pesoMediaDer: mediaDer.peso,
+              pesoTotal,
+              rinde,
+              estado: 'CONFIRMADO'
+            }
+          })
+
+          // Marcar asignación como completada
+          if (asignacion) {
+            await tx.asignacionGarron.update({
+              where: { id: asignacion.id },
+              data: { completado: true }
+            })
+          }
+          
+          console.log('Romaneo completado con ambas medias')
+        }
+      }
+
+      return { mediaRes, romaneo }
+    })
 
     console.log('=== FIN PESAJE EXITOSO ===')
 
     return NextResponse.json({
       success: true,
       data: {
-        id: mediaRes.id,
+        id: result.mediaRes.id,
         garron,
         lado,
         peso: pesoNum,
-        codigo: mediaRes.codigo,
-        romaneoId: romaneo.id
+        codigo: result.mediaRes.codigo,
+        romaneoId: result.romaneo.id
       }
     })
 
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('=== ERROR EN PESAJE ===')
     console.error('Error completo:', error)
+    
+    // Manejar errores específicos
+    if (error instanceof Error && error.message.startsWith('MEDIA_YA_EXISTE:')) {
+      const parts = error.message.split(':')
+      const lado = parts[1]
+      const garronNum = parts[2]
+      return NextResponse.json(
+        { success: false, error: `Ya existe media ${lado?.toLowerCase()} para el garrón ${garronNum}` },
+        { status: 409 } // Conflict
+      )
+    }
+    
     return NextResponse.json(
       { 
         success: false, 

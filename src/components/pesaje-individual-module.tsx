@@ -1,20 +1,18 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { 
-  Scale, RefreshCw, Printer, Eye, Plus, Save, CheckCircle, AlertCircle,
-  Beef, Edit, Trash2, ArrowRight, X
+  Scale, RefreshCw, Plus, CheckCircle, AlertCircle,
+  Beef, Edit, Trash2, ArrowRight, Minus, AlertTriangle, ClipboardCheck
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 
 const TIPOS_ANIMALES: Record<string, { codigo: string; label: string }[]> = {
@@ -87,9 +85,15 @@ interface Animal {
   estado: string
 }
 
+interface TipoCantidadConfirmada {
+  tipoAnimal: string
+  cantidadDTE: number
+  cantidadConfirmada: number
+}
+
 export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropas?: Tropa[]; operador: Operador }) {
   const [tropas, setTropas] = useState<Tropa[]>(propTropas || [])
-  const [tropasListoPesaje, setTropasListoPesaje] = useState<Tropa[]>([])
+  const [tropasPorPesar, setTropasPorPesar] = useState<Tropa[]>([])
   const [tropasPesado, setTropasPesado] = useState<Tropa[]>([])
   const [corrales, setCorrales] = useState<Corral[]>([])
   const [loading, setLoading] = useState(!propTropas)
@@ -101,18 +105,15 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
   const [animalActual, setAnimalActual] = useState(0)
   const [corralDestinoId, setCorralDestinoId] = useState('')
   
-  // Form fields
   const [caravana, setCaravana] = useState('')
   const [tipoAnimalSeleccionado, setTipoAnimalSeleccionado] = useState('')
   const [raza, setRaza] = useState('')
   const [pesoActual, setPesoActual] = useState('')
-  const [observacionesAnimal, setObservacionesAnimal] = useState('')
   
-  // Rotulo preview
-  const [showRotuloPreview, setShowRotuloPreview] = useState(false)
-  const [rotuloPreviewData, setRotuloPreviewData] = useState<Animal | null>(null)
+  const [validacionDialogOpen, setValidacionDialogOpen] = useState(false)
+  const [tiposConfirmados, setTiposConfirmados] = useState<TipoCantidadConfirmada[]>([])
+  const [nuevoTipoSeleccionado, setNuevoTipoSeleccionado] = useState('')
   
-  // Edit dialog
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editingAnimal, setEditingAnimal] = useState<Animal | null>(null)
   const [editCaravana, setEditCaravana] = useState('')
@@ -127,8 +128,9 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
   }, [propTropas])
 
   useEffect(() => {
-    // Filtrar tropas por estado
-    setTropasListoPesaje(tropas.filter(t => t.estado === 'EN_PESAJE' || t.estado === 'RECIBIDO' || t.estado === 'EN_CORRAL'))
+    setTropasPorPesar(tropas.filter(t => 
+      t.estado === 'EN_PESAJE' || t.estado === 'RECIBIDO' || t.estado === 'EN_CORRAL'
+    ))
     setTropasPesado(tropas.filter(t => t.estado === 'PESADO'))
   }, [tropas])
 
@@ -154,18 +156,54 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
     }
   }
 
-  const tiposAnimalActuales = TIPOS_ANIMALES[tropaSeleccionada?.especie || 'BOVINO'] || []
   const razasActuales = tropaSeleccionada?.especie === 'EQUINO' ? RAZAS_EQUINO : RAZAS_BOVINO
 
+  const tiposDisponiblesParaPesar = useMemo(() => {
+    if (tiposConfirmados.length === 0) return []
+    const todosTipos = TIPOS_ANIMALES[tropaSeleccionada?.especie || 'BOVINO'] || []
+    return todosTipos.filter(t => {
+      const confirmado = tiposConfirmados.find(tc => tc.tipoAnimal === t.codigo)
+      return confirmado && confirmado.cantidadConfirmada > 0
+    })
+  }, [tiposConfirmados, tropaSeleccionada?.especie])
+
+  const conteoPesadosPorTipo = useMemo(() => {
+    const conteo: Record<string, number> = {}
+    animales.filter(a => a.estado === 'PESADO').forEach(a => {
+      conteo[a.tipoAnimal] = (conteo[a.tipoAnimal] || 0) + 1
+    })
+    return conteo
+  }, [animales])
+
+  const isTipoDisponible = (tipoCodigo: string): { disponible: boolean; restantes: number; mensaje: string } => {
+    const confirmado = tiposConfirmados.find(tc => tc.tipoAnimal === tipoCodigo)
+    if (!confirmado || confirmado.cantidadConfirmada === 0) {
+      return { disponible: false, restantes: 0, mensaje: 'No declarado' }
+    }
+    const pesados = conteoPesadosPorTipo[tipoCodigo] || 0
+    const restantes = confirmado.cantidadConfirmada - pesados
+    if (restantes <= 0) {
+      return { disponible: false, restantes: 0, mensaje: 'Límite' }
+    }
+    return { disponible: true, restantes, mensaje: `${restantes} rest.` }
+  }
+
   const handleSeleccionarTropa = async (tropa: Tropa) => {
-    // Fetch animals if already exist
+    const tiposIniciales: TipoCantidadConfirmada[] = (tropa.tiposAnimales || []).map(t => ({
+      tipoAnimal: t.tipoAnimal,
+      cantidadDTE: t.cantidad,
+      cantidadConfirmada: t.cantidad
+    }))
+    setTiposConfirmados(tiposIniciales)
+
     try {
       const res = await fetch(`/api/tropas/${tropa.id}`)
       const data = await res.json()
       if (data.success && data.data.animales && data.data.animales.length > 0) {
         setAnimales(data.data.animales)
         const pendientes = data.data.animales.filter((a: Animal) => a.estado === 'RECIBIDO')
-        setAnimalActual(pendientes.length > 0 ? data.data.animales.findIndex((a: Animal) => a.estado === 'RECIBIDO') : data.data.animales.length)
+        // Si hay pendientes, setear al primer pendiente; si no, al primero del array
+        setAnimalActual(pendientes.length > 0 ? data.data.animales.findIndex((a: Animal) => a.estado === 'RECIBIDO') : 0)
       } else {
         setAnimales([])
         setAnimalActual(0)
@@ -175,7 +213,6 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
       setAnimalActual(0)
     }
     
-    // Set corral destino from tropa if available
     if (tropa.corralId) {
       setCorralDestinoId(tropa.corralId)
     } else if (typeof tropa.corral === 'object' && tropa.corral?.id) {
@@ -186,6 +223,7 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
     
     setTropaSeleccionada(tropa)
     resetFormFields()
+    setValidacionDialogOpen(true)
   }
 
   const resetFormFields = () => {
@@ -193,7 +231,81 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
     setTipoAnimalSeleccionado('')
     setRaza('')
     setPesoActual('')
-    setObservacionesAnimal('')
+  }
+
+  const ajustarCantidadConfirmada = (tipoAnimal: string, delta: number) => {
+    setTiposConfirmados(prev => prev.map(tc => {
+      if (tc.tipoAnimal === tipoAnimal) {
+        const nuevaCantidad = Math.max(0, tc.cantidadConfirmada + delta)
+        return { ...tc, cantidadConfirmada: nuevaCantidad }
+      }
+      return tc
+    }))
+  }
+
+  const setCantidadConfirmada = (tipoAnimal: string, cantidad: number) => {
+    setTiposConfirmados(prev => prev.map(tc => {
+      if (tc.tipoAnimal === tipoAnimal) {
+        return { ...tc, cantidadConfirmada: Math.max(0, cantidad) }
+      }
+      return tc
+    }))
+  }
+
+  const totalConfirmados = tiposConfirmados.reduce((acc, tc) => acc + tc.cantidadConfirmada, 0)
+  const totalDTE = tiposConfirmados.reduce((acc, tc) => acc + tc.cantidadDTE, 0)
+
+  const agregarNuevoTipo = () => {
+    if (!nuevoTipoSeleccionado) return
+    if (tiposConfirmados.some(tc => tc.tipoAnimal === nuevoTipoSeleccionado)) {
+      toast.error('Este tipo de animal ya está en la lista')
+      return
+    }
+    setTiposConfirmados(prev => [...prev, {
+      tipoAnimal: nuevoTipoSeleccionado,
+      cantidadDTE: 0,
+      cantidadConfirmada: 1
+    }])
+    setNuevoTipoSeleccionado('')
+    toast.success('Tipo agregado')
+  }
+  
+  const eliminarTipo = (tipoAnimal: string) => {
+    setTiposConfirmados(prev => prev.filter(tc => tc.tipoAnimal !== tipoAnimal))
+  }
+
+  const handleConfirmarValidacion = async () => {
+    if (totalConfirmados === 0) {
+      toast.error('Debe haber al menos un animal confirmado')
+      return
+    }
+    if (!corralDestinoId) {
+      toast.error('Seleccione el corral de destino')
+      return
+    }
+    
+    setValidacionDialogOpen(false)
+    
+    if (totalConfirmados !== totalDTE || tiposConfirmados.some(tc => tc.cantidadConfirmada !== tc.cantidadDTE)) {
+      try {
+        await fetch('/api/tropas', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: tropaSeleccionada?.id,
+            cantidadCabezas: totalConfirmados,
+            tiposAnimales: tiposConfirmados.map(tc => ({
+              tipoAnimal: tc.tipoAnimal,
+              cantidad: tc.cantidadConfirmada
+            }))
+          })
+        })
+        toast.success('Cantidades actualizadas')
+      } catch {
+        toast.error('Error al actualizar cantidades')
+      }
+    }
+    handleIniciarPesaje()
   }
 
   const handleIniciarPesaje = async () => {
@@ -205,7 +317,6 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
     
     setSaving(true)
     try {
-      // Actualizar estado de la tropa a EN_PESAJE y asignar corral
       const res = await fetch('/api/tropas', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -220,15 +331,14 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
         toast.success('Pesaje iniciado')
         setActiveTab('pesar')
         
-        // Create animals list based on tiposAnimales
         if (animales.length === 0) {
           const nuevosAnimales: Animal[] = []
           let num = 1
           const prefijo = tropaSeleccionada.especie === 'BOVINO' ? 'B' : 'E'
           const year = new Date().getFullYear()
           
-          for (const tipo of tropaSeleccionada.tiposAnimales || []) {
-            for (let i = 0; i < tipo.cantidad; i++) {
+          for (const tipo of tiposConfirmados) {
+            for (let i = 0; i < tipo.cantidadConfirmada; i++) {
               nuevosAnimales.push({
                 id: `temp-${num}`,
                 numero: num,
@@ -239,16 +349,14 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
               num++
             }
           }
-          
           setAnimales(nuevosAnimales)
           setAnimalActual(0)
         }
-        
         fetchData()
       } else {
         toast.error('Error al iniciar pesaje')
       }
-    } catch (error) {
+    } catch {
       toast.error('Error de conexión')
     } finally {
       setSaving(false)
@@ -257,15 +365,19 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
 
   const handleRegistrarPeso = async () => {
     if (!pesoActual || !animales[animalActual]) return
-    
     const peso = parseFloat(pesoActual)
     if (isNaN(peso) || peso <= 0) {
       toast.error('Ingrese un peso válido')
       return
     }
-
     if (!tipoAnimalSeleccionado) {
       toast.error('Seleccione el tipo de animal')
+      return
+    }
+
+    const tipoDisponible = isTipoDisponible(tipoAnimalSeleccionado)
+    if (!tipoDisponible.disponible) {
+      toast.error(`No puede asignar más de tipo ${tipoAnimalSeleccionado}`)
       return
     }
 
@@ -273,7 +385,6 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
     try {
       const animal = animales[animalActual]
       
-      // Crear/actualizar animal en la base de datos
       const res = await fetch('/api/animales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -285,7 +396,6 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
           caravana: caravana || null,
           raza: raza || null,
           pesoVivo: peso,
-          observaciones: observacionesAnimal || null,
           operadorId: operador.id
         })
       })
@@ -293,7 +403,6 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
       if (res.ok) {
         const newAnimal = await res.json()
         
-        // Actualizar animal en la lista local
         const animalesActualizados = [...animales]
         animalesActualizados[animalActual] = {
           ...animalesActualizados[animalActual],
@@ -302,25 +411,21 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
           raza: raza || undefined,
           tipoAnimal: tipoAnimalSeleccionado,
           pesoVivo: peso,
-          observaciones: observacionesAnimal || undefined,
           estado: 'PESADO'
         }
         setAnimales(animalesActualizados)
         
-        // Imprimir rótulo
         imprimirRotulo(animalesActualizados[animalActual])
         
-        // Avanzar al siguiente animal automáticamente
         const nextIndex = animalesActualizados.findIndex((a, i) => a.estado === 'RECIBIDO' && i > animalActual)
         if (nextIndex !== -1) {
           setAnimalActual(nextIndex)
           resetFormFields()
-          toast.success(`Animal ${animal.numero} registrado - ${peso} kg`, { duration: 1500 })
+          toast.success(`Animal ${animal.numero} - ${peso} kg`, { duration: 1500 })
         } else {
-          // Check if all animals are weighed
           const noPesados = animalesActualizados.filter(a => a.estado === 'RECIBIDO')
           if (noPesados.length === 0) {
-            toast.success('¡Pesaje completado!')
+            toast.success('Pesaje completado')
             handleFinalizarPesaje()
           } else {
             const firstPendiente = animalesActualizados.findIndex(a => a.estado === 'RECIBIDO')
@@ -334,7 +439,7 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
         const errorData = await res.json()
         toast.error(errorData.error || 'Error al registrar peso')
       }
-    } catch (error) {
+    } catch {
       toast.error('Error de conexión')
     } finally {
       setSaving(false)
@@ -346,10 +451,8 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
     
     setSaving(true)
     try {
-      // Calcular peso total
       const pesoTotal = animales.reduce((acc, a) => acc + (a.pesoVivo || 0), 0)
       
-      // Actualizar estado de la tropa a PESADO
       const res = await fetch('/api/tropas', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -367,22 +470,22 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
         setTropaSeleccionada(null)
         setAnimales([])
         setAnimalActual(0)
+        setTiposConfirmados([])
         setActiveTab('solicitar')
         await fetchData()
       } else {
         toast.error(data.error || 'Error al finalizar pesaje')
       }
-    } catch (error) {
-      console.error('Error al finalizar pesaje:', error)
-      toast.error('Error de conexión al finalizar pesaje')
+    } catch {
+      toast.error('Error de conexión')
     } finally {
       setSaving(false)
     }
   }
 
+  // Rótulo de 10x5 cm con código de barras (solo en impresión)
   const imprimirRotulo = (animal: Animal) => {
-    // Rótulo simplificado con SOLO 4 datos clave
-    const printWindow = window.open('', '_blank', 'width=300,height=400')
+    const printWindow = window.open('', '_blank', 'width=400,height=250')
     if (printWindow) {
       printWindow.document.write(`
         <!DOCTYPE html>
@@ -390,90 +493,71 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
         <head>
           <title>Rótulo ${animal.codigo}</title>
           <style>
-            @page { size: 10cm 10cm; margin: 0; }
+            @page { size: 10cm 5cm; margin: 0; }
             body { 
               font-family: Arial, sans-serif; 
-              padding: 5mm; 
+              padding: 3mm; 
               width: 10cm;
-              height: 10cm;
+              height: 5cm;
               box-sizing: border-box;
+              margin: 0;
             }
             .rotulo {
-              border: 4px solid black;
-              padding: 4mm;
+              border: 3px solid black;
+              padding: 3mm;
               height: 100%;
               box-sizing: border-box;
               display: flex;
               flex-direction: column;
+              justify-content: space-between;
             }
             .header {
               text-align: center;
-              border-bottom: 2px solid black;
-              padding-bottom: 3mm;
-              margin-bottom: 3mm;
-            }
-            .empresa {
-              font-size: 12px;
+              font-size: 14px;
               font-weight: bold;
+              border-bottom: 2px solid black;
+              padding-bottom: 2mm;
             }
-            .dato {
+            .content {
               display: flex;
               justify-content: space-between;
               align-items: center;
-              padding: 2mm 0;
-              border-bottom: 1px dashed #ccc;
+              flex: 1;
             }
-            .label { font-weight: bold; font-size: 14px; }
-            .valor { font-size: 18px; font-weight: bold; }
-            .peso-destacado { 
-              font-size: 32px; 
-              font-weight: bold; 
+            .numero-animal {
+              font-size: 48px;
+              font-weight: bold;
               text-align: center;
-              margin: 4mm 0;
-              padding: 4mm;
-              background: #000;
-              color: #fff;
-              border-radius: 5px;
+              line-height: 1;
+            }
+            .datos {
+              text-align: right;
+              font-size: 12px;
+            }
+            .datos div {
+              margin: 1mm 0;
             }
             .barcode {
               text-align: center;
-              margin-top: auto;
               font-family: 'Libre Barcode 39', cursive;
-              font-size: 28px;
+              font-size: 24px;
+              letter-spacing: 2px;
             }
           </style>
         </head>
         <body>
           <div class="rotulo">
-            <div class="header">
-              <div class="empresa">SOLEMAR ALIMENTARIA</div>
+            <div class="header">SOLEMAR ALIMENTARIA</div>
+            <div class="content">
+              <div class="numero-animal">${animal.numero}</div>
+              <div class="datos">
+                <div><strong>Tropa:</strong> ${tropaSeleccionada?.codigo || ''}</div>
+                <div><strong>Tipo:</strong> ${animal.tipoAnimal}</div>
+                <div><strong>Peso:</strong> ${animal.pesoVivo?.toLocaleString()} kg</div>
+              </div>
             </div>
-            
-            <!-- 4 DATOS CLAVE -->
-            <div class="dato">
-              <span class="label">TROPA:</span>
-              <span class="valor">${tropaSeleccionada?.codigo || ''}</span>
-            </div>
-            
-            <div class="dato">
-              <span class="label">ANIMAL Nº:</span>
-              <span class="valor">${animal.numero}</span>
-            </div>
-            
-            <div class="dato">
-              <span class="label">FECHA:</span>
-              <span class="valor">${new Date().toLocaleDateString('es-AR')}</span>
-            </div>
-            
-            <div class="peso-destacado">
-              ${animal.pesoVivo?.toLocaleString()} KG
-            </div>
-            
-            <div class="barcode">
-              *${animal.codigo}*
-            </div>
+            <div class="barcode">*${animal.codigo}*</div>
           </div>
-          
           <script>
             window.onload = function() { 
               window.print(); 
@@ -485,11 +569,6 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
       `)
       printWindow.document.close()
     }
-  }
-
-  const previewRotulo = (animal: Animal) => {
-    setRotuloPreviewData(animal)
-    setShowRotuloPreview(true)
   }
 
   const handleEditAnimal = (animal: Animal) => {
@@ -520,17 +599,9 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
       if (res.ok) {
         toast.success('Animal actualizado')
         setEditDialogOpen(false)
-        
-        // Update local state
         const updated = animales.map(a => {
           if (a.id === editingAnimal.id) {
-            return {
-              ...a,
-              caravana: editCaravana || undefined,
-              tipoAnimal: editTipoAnimal,
-              raza: editRaza || undefined,
-              pesoVivo: parseFloat(editPeso) || undefined
-            }
+            return { ...a, caravana: editCaravana || undefined, tipoAnimal: editTipoAnimal, raza: editRaza || undefined, pesoVivo: parseFloat(editPeso) || undefined }
           }
           return a
         })
@@ -538,7 +609,7 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
       } else {
         toast.error('Error al actualizar')
       }
-    } catch (error) {
+    } catch {
       toast.error('Error de conexión')
     }
   }
@@ -547,10 +618,7 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
     if (!confirm(`¿Eliminar animal ${animal.numero}?`)) return
     
     try {
-      const res = await fetch(`/api/animales?id=${animal.id}`, {
-        method: 'DELETE'
-      })
-      
+      const res = await fetch(`/api/animales?id=${animal.id}`, { method: 'DELETE' })
       if (res.ok) {
         toast.success('Animal eliminado')
         const updated = animales.filter(a => a.id !== animal.id)
@@ -561,14 +629,9 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
       } else {
         toast.error('Error al eliminar')
       }
-    } catch (error) {
+    } catch {
       toast.error('Error de conexión')
     }
-  }
-
-  const handleReprint = (animal: Animal) => {
-    imprimirRotulo(animal)
-    toast.success('Rótulo enviado a impresión')
   }
 
   const animalesPendientes = animales.filter(a => a.estado === 'RECIBIDO')
@@ -576,514 +639,493 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100 flex items-center justify-center">
+      <div className="h-screen bg-stone-100 flex items-center justify-center">
         <Scale className="w-8 h-8 animate-spin text-amber-500" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-stone-50 to-stone-100 p-4 md:p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-stone-800">Pesaje Individual</h2>
-            <p className="text-stone-500">Pesaje de animales por tropa con identificación completa</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <Button variant="outline" size="sm" onClick={fetchData}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Actualizar
-            </Button>
-            <Badge variant="outline" className="text-lg px-4 py-2">
-              <Beef className="h-4 w-4 mr-2 text-amber-500" />
-              {tropasListoPesaje.length} tropas pendientes
-            </Badge>
-          </div>
+    <div className="h-screen bg-stone-100 flex flex-col overflow-hidden">
+      {/* Header Compacto */}
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b flex-shrink-0">
+        <h2 className="text-lg font-bold text-stone-800">Pesaje Individual</h2>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={fetchData}>
+            <RefreshCw className="w-4 h-4" />
+          </Button>
+          <Badge variant="outline" className="text-sm">
+            <Beef className="h-3 w-3 mr-1 text-amber-500" />
+            {tropasPorPesar.length} por pesar
+          </Badge>
         </div>
+      </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="solicitar">Solicitar Tropa</TabsTrigger>
-            <TabsTrigger value="pesar" disabled={!tropaSeleccionada}>Pesar Animales</TabsTrigger>
-            <TabsTrigger value="historial">Historial</TabsTrigger>
-          </TabsList>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
+        <TabsList className="grid w-full grid-cols-3 flex-shrink-0">
+          <TabsTrigger value="solicitar">Solicitar Tropa</TabsTrigger>
+          <TabsTrigger value="pesar" disabled={!tropaSeleccionada}>Pesar</TabsTrigger>
+          <TabsTrigger value="historial">Historial</TabsTrigger>
+        </TabsList>
 
-          {/* SOLICITAR TROPA */}
-          <TabsContent value="solicitar" className="space-y-6">
-            <Card className="border-0 shadow-md">
-              <CardHeader>
-                <CardTitle className="text-lg">Tropas Disponibles para Pesaje</CardTitle>
-                <CardDescription>
-                  Seleccione una tropa para iniciar el pesaje individual
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                {tropasListoPesaje.length === 0 ? (
-                  <div className="text-center py-8 text-stone-400">
-                    <Beef className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p>No hay tropas pendientes de pesaje</p>
+        {/* SOLICITAR TROPA */}
+        <TabsContent value="solicitar" className="flex-1 overflow-auto p-4 space-y-4">
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="bg-amber-50 py-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600" />
+                Tropas Por Pesar ({tropasPorPesar.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y">
+                {tropasPorPesar.length === 0 ? (
+                  <div className="text-center py-6 text-stone-400">
+                    <Beef className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">No hay tropas pendientes</p>
                   </div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Tropa</TableHead>
-                        <TableHead>Usuario Faena</TableHead>
-                        <TableHead>Especie</TableHead>
-                        <TableHead>Cabezas</TableHead>
-                        <TableHead>Corral</TableHead>
-                        <TableHead>Estado</TableHead>
-                        <TableHead>Acciones</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {tropasListoPesaje.map((tropa) => (
-                        <TableRow key={tropa.id} className="hover:bg-stone-50">
-                          <TableCell className="font-mono font-bold">{tropa.codigo}</TableCell>
-                          <TableCell>{tropa.usuarioFaena?.nombre || '-'}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline">{tropa.especie}</Badge>
-                          </TableCell>
-                          <TableCell className="font-medium">{tropa.cantidadCabezas}</TableCell>
-                          <TableCell>{typeof tropa.corral === 'object' ? tropa.corral?.nombre : tropa.corral || '-'}</TableCell>
-                          <TableCell>
-                            <Badge className={
-                              tropa.estado === 'RECIBIDO' ? 'bg-amber-100 text-amber-700' :
-                              tropa.estado === 'EN_CORRAL' ? 'bg-blue-100 text-blue-700' :
-                              'bg-purple-100 text-purple-700'
-                            }>
-                              {tropa.estado === 'RECIBIDO' ? 'Recibido' : 
-                               tropa.estado === 'EN_CORRAL' ? 'En Corral' : 'En Pesaje'}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              onClick={() => handleSeleccionarTropa(tropa)}
-                              className="bg-amber-500 hover:bg-amber-600"
-                            >
-                              <Scale className="w-4 h-4 mr-2" />
-                              Seleccionar
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Detalle de tropa seleccionada */}
-            {tropaSeleccionada && (
-              <Card className="border-0 shadow-md border-amber-200">
-                <CardHeader className="bg-amber-50">
-                  <CardTitle className="text-lg">Tropa Seleccionada</CardTitle>
-                </CardHeader>
-                <CardContent className="p-6">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-                    <div>
-                      <p className="text-sm text-stone-500">Código</p>
-                      <p className="text-xl font-mono font-bold">{tropaSeleccionada.codigo}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-stone-500">Usuario Faena</p>
-                      <p className="font-medium">{tropaSeleccionada.usuarioFaena?.nombre}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-stone-500">Especie</p>
-                      <p className="font-medium">{tropaSeleccionada.especie}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-stone-500">Total Cabezas</p>
-                      <p className="text-2xl font-bold text-amber-600">{tropaSeleccionada.cantidadCabezas}</p>
-                    </div>
-                  </div>
-                  
-                  {/* Corral de destino */}
-                  <div className="mb-4 space-y-2">
-                    <Label className="text-base font-semibold">Corral de Destino *</Label>
-                    <Select value={corralDestinoId} onValueChange={setCorralDestinoId}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Seleccione el corral donde se ubicarán los animales..." />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {corrales.map((c) => {
-                          const stockActual = tropaSeleccionada.especie === 'BOVINO' ? c.stockBovinos : c.stockEquinos
-                          const disponible = c.capacidad - stockActual
-                          return (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.nombre} - Capacidad: {c.capacidad} | Disponible: {disponible}
-                            </SelectItem>
-                          )
-                        })}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {tropaSeleccionada.tiposAnimales && tropaSeleccionada.tiposAnimales.length > 0 && (
-                    <div className="mb-4">
-                      <p className="text-sm text-stone-500 mb-2">Tipos de Animales:</p>
-                      <div className="flex flex-wrap gap-2">
-                        {tropaSeleccionada.tiposAnimales.map((t, i) => (
-                          <Badge key={i} variant="outline" className="text-sm">
-                            {t.tipoAnimal}: {t.cantidad} cabezas
-                          </Badge>
-                        ))}
+                  tropasPorPesar.map((tropa) => (
+                    <div key={tropa.id} className="flex items-center justify-between p-3 hover:bg-stone-50">
+                      <div className="flex items-center gap-4">
+                        <span className="font-mono font-bold text-sm">{tropa.codigo}</span>
+                        <span className="text-sm text-stone-600">{tropa.usuarioFaena?.nombre || '-'}</span>
+                        <Badge variant="outline" className="text-xs">{tropa.especie}</Badge>
+                        <span className="text-sm font-medium">{tropa.cantidadCabezas} cab</span>
                       </div>
-                    </div>
-                  )}
-
-                  <Button
-                    onClick={handleIniciarPesaje}
-                    disabled={saving || !corralDestinoId}
-                    className="w-full h-12 text-lg bg-green-600 hover:bg-green-700"
-                  >
-                    <Scale className="w-5 h-5 mr-2" />
-                    Iniciar Pesaje Individual
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-          </TabsContent>
-
-          {/* PESAR ANIMALES */}
-          <TabsContent value="pesar" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Formulario de pesaje */}
-              <Card className="lg:col-span-2 border-0 shadow-md">
-                <CardHeader className="bg-green-50">
-                  <CardTitle className="text-lg">
-                    Pesaje - {tropaSeleccionada?.codigo}
-                  </CardTitle>
-                  <CardDescription>
-                    Animal {animalActual + 1} de {animales.length} | {animalesPendientes.length} pendientes
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="p-6">
-                  {/* Barra de progreso */}
-                  <div className="mb-6">
-                    <div className="flex justify-between text-sm mb-2">
-                      <span>Progreso</span>
-                      <span>{animalesPesados.length} / {animales.length} pesados</span>
-                    </div>
-                    <div className="h-4 bg-stone-200 rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-green-500 transition-all"
-                        style={{ width: `${(animalesPesados.length / animales.length) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Datos del animal actual */}
-                  {animales[animalActual] && (
-                    <div className="space-y-4">
-                      <div className="bg-stone-50 p-4 rounded-lg">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <p className="text-sm text-stone-500">Nº de Animal</p>
-                            <p className="text-2xl font-bold">{animales[animalActual].numero}</p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-stone-500">Código</p>
-                            <p className="text-lg font-mono">{animales[animalActual].codigo}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Campos de identificación */}
-                      <div className="space-y-4">
-                        {/* Caravana */}
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label>Caravana (opcional)</Label>
-                            <Input
-                              value={caravana}
-                              onChange={(e) => setCaravana(e.target.value.toUpperCase())}
-                              placeholder="Nº caravana"
-                              className="font-mono text-lg h-12"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Peso (kg) *</Label>
-                            <Input
-                              type="number"
-                              value={pesoActual}
-                              onChange={(e) => setPesoActual(e.target.value)}
-                              className="text-2xl font-bold text-center h-12"
-                              placeholder="0"
-                              autoFocus
-                            />
-                          </div>
-                        </div>
-
-                        {/* Tipo de Animal - Botones */}
-                        <div className="space-y-2">
-                          <Label className="text-base font-semibold">Tipo de Animal *</Label>
-                          <div className="flex flex-wrap gap-2">
-                            {tiposAnimalActuales.map((t) => {
-                              const isSelected = tipoAnimalSeleccionado === t.codigo
-                              return (
-                                <button
-                                  key={t.codigo}
-                                  type="button"
-                                  onClick={() => setTipoAnimalSeleccionado(t.codigo)}
-                                  className={`px-4 py-3 rounded-lg border-2 font-bold text-lg transition-all ${
-                                    isSelected 
-                                      ? 'bg-amber-500 text-white border-amber-600 shadow-md' 
-                                      : 'bg-white border-gray-200 hover:border-amber-300 hover:bg-amber-50'
-                                  }`}
-                                >
-                                  {t.codigo}
-                                </button>
-                              )
-                            })}
-                          </div>
-                          {tipoAnimalSeleccionado && (
-                            <p className="text-sm text-stone-500 mt-1">
-                              Seleccionado: {tiposAnimalActuales.find(t => t.codigo === tipoAnimalSeleccionado)?.label}
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Raza - Dropdown */}
-                        <div className="space-y-2">
-                          <Label>Raza (opcional)</Label>
-                          <Select value={raza} onValueChange={setRaza}>
-                            <SelectTrigger className="h-12">
-                              <SelectValue placeholder="Seleccionar raza..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {razasActuales.map((r) => (
-                                <SelectItem key={r} value={r}>{r}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {/* Observaciones */}
-                        <div className="space-y-2">
-                          <Label>Observaciones</Label>
-                          <Textarea
-                            value={observacionesAnimal}
-                            onChange={(e) => setObservacionesAnimal(e.target.value)}
-                            placeholder="Notas adicionales del animal..."
-                            rows={2}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Botón de registro */}
-                      <Button
-                        onClick={handleRegistrarPeso}
-                        disabled={saving || !pesoActual || !tipoAnimalSeleccionado}
-                        className="w-full h-16 text-xl bg-green-600 hover:bg-green-700"
-                      >
-                        {saving ? (
-                          <>Guardando...</>
-                        ) : (
-                          <>
-                            <Scale className="w-6 h-6 mr-2" />
-                            Registrar e Imprimir <ArrowRight className="w-5 h-5 ml-2" />
-                          </>
-                        )}
+                      <Button size="sm" onClick={() => handleSeleccionarTropa(tropa)} className="bg-amber-500 hover:bg-amber-600">
+                        <Scale className="w-3 h-3 mr-1" /> Seleccionar
                       </Button>
                     </div>
-                  )}
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
-                  {/* Navegación entre animales */}
-                  <div className="flex gap-2 mt-6">
-                    <Button
-                      variant="outline"
-                      onClick={() => setAnimalActual(Math.max(0, animalActual - 1))}
-                      disabled={animalActual === 0}
-                      className="flex-1"
-                    >
-                      ← Anterior
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => setAnimalActual(Math.min(animales.length - 1, animalActual + 1))}
-                      disabled={animalActual >= animales.length - 1}
-                      className="flex-1"
-                    >
-                      Siguiente →
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Lista de animales */}
-              <Card className="border-0 shadow-md">
-                <CardHeader>
-                  <CardTitle className="text-lg">Lista de Animales</CardTitle>
-                  <CardDescription>
-                    {animalesPesados.length} pesados, {animalesPendientes.length} pendientes
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="max-h-[500px] overflow-y-auto space-y-1">
-                    {animales.map((animal, idx) => (
-                      <div
-                        key={animal.id}
-                        className={`p-2 rounded text-sm flex items-center justify-between ${
-                          idx === animalActual 
-                            ? 'bg-amber-100 border-amber-300 border' 
-                            : 'hover:bg-stone-50'
-                        }`}
-                      >
-                        <button
-                          onClick={() => setAnimalActual(idx)}
-                          className="flex items-center gap-2 flex-1 text-left"
-                        >
-                          {animal.estado === 'PESADO' ? (
-                            <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
-                          ) : (
-                            <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
-                          )}
-                          <span className="font-medium">#{animal.numero}</span>
-                          {animal.caravana && (
-                            <span className="text-xs text-stone-400">({animal.caravana})</span>
-                          )}
-                          {animal.pesoVivo && (
-                            <span className="font-medium text-green-600 ml-auto mr-2">{animal.pesoVivo.toLocaleString()} kg</span>
-                          )}
-                        </button>
-                        
-                        {/* Acciones */}
-                        {animal.estado === 'PESADO' && animal.id && !animal.id.startsWith('temp-') && (
-                          <div className="flex gap-1">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleEditAnimal(animal); }}
-                              className="p-1 rounded hover:bg-stone-200 text-stone-500 hover:text-blue-600"
-                              title="Editar"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleReprint(animal); }}
-                              className="p-1 rounded hover:bg-stone-200 text-stone-500 hover:text-green-600"
-                              title="Reimprimir"
-                            >
-                              <Printer className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDeleteAnimal(animal); }}
-                              className="p-1 rounded hover:bg-stone-200 text-stone-500 hover:text-red-600"
-                              title="Eliminar"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  
-                  {/* Total */}
-                  <div className="border-t mt-4 pt-4">
-                    <div className="flex justify-between font-medium">
-                      <span>Total Pesado:</span>
-                      <span className="text-green-600">
-                        {animalesPesados.reduce((acc, a) => acc + (a.pesoVivo || 0), 0).toLocaleString()} kg
-                      </span>
-                    </div>
-                    {animalesPesados.length > 0 && (
-                      <div className="flex justify-between text-sm text-stone-500">
-                        <span>Promedio:</span>
-                        <span>
-                          {Math.round(animalesPesados.reduce((acc, a) => acc + (a.pesoVivo || 0), 0) / animalesPesados.length).toLocaleString()} kg/cab
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* HISTORIAL */}
-          <TabsContent value="historial">
-            <Card className="border-0 shadow-md">
-              <CardHeader>
-                <CardTitle>Tropas Pesadas</CardTitle>
-                <CardDescription>Historial de tropas con pesaje individual completado</CardDescription>
-              </CardHeader>
-              <CardContent>
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="bg-green-50 py-2">
+              <CardTitle className="text-base flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-green-600" />
+                Tropas Pesadas ({tropasPesado.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y">
                 {tropasPesado.length === 0 ? (
-                  <div className="text-center py-8 text-stone-400">
-                    <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p>No hay tropas pesadas</p>
+                  <div className="text-center py-6 text-stone-400">
+                    <CheckCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">No hay tropas pesadas</p>
                   </div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Tropa</TableHead>
-                        <TableHead>Usuario Faena</TableHead>
-                        <TableHead>Especie</TableHead>
-                        <TableHead>Cabezas</TableHead>
-                        <TableHead>Peso Total</TableHead>
-                        <TableHead>Peso Promedio</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {tropasPesado.map((tropa) => (
-                        <TableRow key={tropa.id}>
-                          <TableCell className="font-mono font-bold">{tropa.codigo}</TableCell>
-                          <TableCell>{tropa.usuarioFaena?.nombre || '-'}</TableCell>
-                          <TableCell><Badge variant="outline">{tropa.especie}</Badge></TableCell>
-                          <TableCell>{tropa.cantidadCabezas}</TableCell>
-                          <TableCell className="font-bold text-green-600">
-                            {tropa.pesoTotalIndividual?.toLocaleString() || '-'} kg
-                          </TableCell>
-                          <TableCell>
-                            {tropa.pesoTotalIndividual 
-                              ? Math.round(tropa.pesoTotalIndividual / tropa.cantidadCabezas).toLocaleString() 
-                              : '-'} kg/cab
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  tropasPesado.map((tropa) => (
+                    <div key={tropa.id} className="flex items-center justify-between p-3">
+                      <div className="flex items-center gap-4">
+                        <span className="font-mono font-bold text-sm">{tropa.codigo}</span>
+                        <span className="text-sm text-stone-600">{tropa.usuarioFaena?.nombre || '-'}</span>
+                        <span className="text-sm font-medium">{tropa.cantidadCabezas} cab</span>
+                        <span className="text-sm font-bold text-green-600">{tropa.pesoTotalIndividual?.toLocaleString() || '-'} kg</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* PESAR ANIMALES - Layout sin scroll */}
+        <TabsContent value="pesar" className="flex-1 overflow-hidden p-4">
+          <div className="h-full grid grid-cols-3 gap-4">
+            {/* Panel Izquierdo: Formulario de Pesaje */}
+            <Card className="col-span-2 border-0 shadow-sm flex flex-col h-full overflow-hidden">
+              <CardHeader className="bg-green-50 py-2 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">{tropaSeleccionada?.codigo}</CardTitle>
+                  <div className="flex items-center gap-2 text-sm">
+                    <span>{animalesPesados.length}/{animales.length}</span>
+                    <div className="w-24 h-2 bg-stone-200 rounded-full overflow-hidden">
+                      <div className="h-full bg-green-500" style={{ width: `${(animalesPesados.length / animales.length) * 100}%` }} />
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1 p-4 overflow-hidden flex flex-col">
+                {animales.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center text-center">
+                    <div>
+                      <Scale className="w-16 h-16 mx-auto mb-4 text-stone-300" />
+                      <p className="text-stone-500">No hay animales para pesar</p>
+                      <p className="text-sm text-stone-400 mt-1">Confirme la validación para generar animales</p>
+                    </div>
+                  </div>
+                ) : animalesPendientes.length === 0 ? (
+                  <div className="flex-1 flex items-center justify-center text-center">
+                    <div>
+                      <CheckCircle className="w-16 h-16 mx-auto mb-4 text-green-500" />
+                      <p className="text-green-600 font-semibold">Pesaje completado</p>
+                      <p className="text-sm text-stone-500 mt-1">Todos los animales han sido pesados</p>
+                      <Button 
+                        className="mt-4" 
+                        onClick={() => handleFinalizarPesaje()}
+                      >
+                        Finalizar Pesaje
+                      </Button>
+                    </div>
+                  </div>
+                ) : animales[animalActual] ? (
+                  <div className="flex-1 flex flex-col">
+                    {/* NÚMERO DE ANIMAL DESTACADO */}
+                    <div className="text-center mb-4">
+                      <div className="text-8xl font-black text-stone-800 leading-none">
+                        {animales[animalActual].numero}
+                      </div>
+                      <div className="text-stone-400 text-sm mt-1">de {animales.length} animales</div>
+                    </div>
+
+                    {/* Tipos disponibles - Compacto */}
+                    <div className="mb-3">
+                      <Label className="text-xs font-semibold mb-1 block">Tipo *</Label>
+                      <div className="flex flex-wrap gap-1">
+                        {tiposDisponiblesParaPesar.map((t) => {
+                          const tipoStatus = isTipoDisponible(t.codigo)
+                          const isSelected = tipoAnimalSeleccionado === t.codigo
+                          return (
+                            <button
+                              key={t.codigo}
+                              type="button"
+                              onClick={() => tipoStatus.disponible && setTipoAnimalSeleccionado(t.codigo)}
+                              disabled={!tipoStatus.disponible}
+                              className={`px-3 py-2 rounded text-sm font-bold transition-all ${
+                                isSelected 
+                                  ? 'bg-amber-500 text-white' 
+                                  : tipoStatus.disponible
+                                    ? 'bg-white border hover:border-amber-300'
+                                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                              }`}
+                            >
+                              {t.codigo} <span className="text-xs font-normal">({tipoStatus.restantes})</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Peso y Caravana - Compacto */}
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <Label className="text-xs mb-1 block">Peso (kg) *</Label>
+                        <Input
+                          type="number"
+                          value={pesoActual}
+                          onChange={(e) => setPesoActual(e.target.value)}
+                          className="text-3xl font-bold text-center h-14"
+                          placeholder="0"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs mb-1 block">Caravana</Label>
+                        <Input
+                          value={caravana}
+                          onChange={(e) => setCaravana(e.target.value.toUpperCase())}
+                          placeholder="Opcional"
+                          className="font-mono h-14"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Raza - Compacto */}
+                    <div className="mb-4">
+                      <Label className="text-xs mb-1 block">Raza</Label>
+                      <Select value={raza} onValueChange={setRaza}>
+                        <SelectTrigger className="h-10">
+                          <SelectValue placeholder="Seleccionar..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {razasActuales.map((r) => (
+                            <SelectItem key={r} value={r}>{r}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Botón Registrar */}
+                    <Button
+                      onClick={handleRegistrarPeso}
+                      disabled={saving || !pesoActual || !tipoAnimalSeleccionado}
+                      className="w-full h-14 text-lg bg-green-600 hover:bg-green-700"
+                    >
+                      {saving ? 'Guardando...' : (
+                        <>
+                          <Scale className="w-5 h-5 mr-2" />
+                          REGISTRAR <ArrowRight className="w-4 h-4 ml-2" />
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-center">
+                    <div>
+                      <AlertCircle className="w-16 h-16 mx-auto mb-4 text-amber-500" />
+                      <p className="text-stone-600">Seleccione un animal pendiente</p>
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
-      </div>
+
+            {/* Panel Derecho: Lista de Animales con scroll */}
+            <Card className="border-0 shadow-sm flex flex-col h-full overflow-hidden">
+              <CardHeader className="py-2 flex-shrink-0">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">Animales</CardTitle>
+                  <div className="text-xs text-stone-500">
+                    {animalesPesados.length} pesados, {animalesPendientes.length} pendientes
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="flex-1 overflow-y-auto p-0">
+                <div className="divide-y">
+                  {animales.map((animal, idx) => (
+                    <div
+                      key={animal.id}
+                      onClick={() => setAnimalActual(idx)}
+                      className={`flex items-center justify-between p-2 cursor-pointer ${
+                        idx === animalActual ? 'bg-amber-100' : 'hover:bg-stone-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {animal.estado === 'PESADO' ? (
+                          <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                        )}
+                        <span className={`font-bold ${animal.estado === 'PESADO' ? 'text-green-700' : ''}`}>
+                          #{animal.numero}
+                        </span>
+                        <Badge variant="outline" className="text-xs">{animal.tipoAnimal}</Badge>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {animal.pesoVivo && (
+                          <span className="text-xs text-green-600 font-medium">{animal.pesoVivo}kg</span>
+                        )}
+                        {animal.estado === 'PESADO' && animal.id && !animal.id.startsWith('temp-') && (
+                          <button onClick={(e) => { e.stopPropagation(); handleEditAnimal(animal); }} className="p-1 hover:bg-stone-200 rounded">
+                            <Edit className="w-3 h-3 text-stone-400" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* HISTORIAL */}
+        <TabsContent value="historial" className="flex-1 overflow-auto p-4">
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="bg-green-50 py-2">
+              <CardTitle className="text-base">Historial de Pesajes</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="divide-y">
+                {tropasPesado.length === 0 ? (
+                  <div className="text-center py-8 text-stone-400">No hay tropas pesadas</div>
+                ) : (
+                  tropasPesado.map((tropa) => (
+                    <div key={tropa.id} className="p-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-mono font-bold">{tropa.codigo}</span>
+                        <span className="font-bold text-green-600">{tropa.pesoTotalIndividual?.toLocaleString() || '-'} kg</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-stone-500">
+                        <span>{tropa.usuarioFaena?.nombre || '-'}</span>
+                        <span>{tropa.cantidadCabezas} cabezas</span>
+                        {tropa.pesoTotalIndividual && tropa.cantidadCabezas && (
+                          <span>_prom: {Math.round(tropa.pesoTotalIndividual / tropa.cantidadCabezas)} kg/cab</span>
+                        )}
+                      </div>
+                      {tropa.tiposAnimales && tropa.tiposAnimales.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {tropa.tiposAnimales.map((t, i) => (
+                            <Badge key={i} variant="secondary" className="text-xs">
+                              {t.tipoAnimal}: {t.cantidad}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* DIÁLOGO DE VALIDACIÓN */}
+      <Dialog open={validacionDialogOpen} onOpenChange={setValidacionDialogOpen}>
+        <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <ClipboardCheck className="w-5 h-5 text-amber-600" />
+              Validar Tropa {tropaSeleccionada?.codigo}
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-2">
+            {/* Tabla de validación */}
+            <div className="border rounded-lg overflow-hidden text-sm">
+              <div className="grid grid-cols-4 gap-2 p-2 bg-stone-100 font-semibold text-xs">
+                <div>Tipo</div>
+                <div className="text-center">DTE</div>
+                <div className="text-center">Recibido</div>
+                <div className="text-center">Acción</div>
+              </div>
+              {tiposConfirmados.map((tc) => {
+                const tipoInfo = TIPOS_ANIMALES[tropaSeleccionada?.especie || 'BOVINO']?.find(t => t.codigo === tc.tipoAnimal)
+                const diferencia = tc.cantidadConfirmada - tc.cantidadDTE
+                const esNuevo = tc.cantidadDTE === 0
+                return (
+                  <div key={tc.tipoAnimal} className={`grid grid-cols-4 gap-2 p-2 items-center ${esNuevo ? 'bg-blue-50' : diferencia !== 0 ? 'bg-amber-50' : ''}`}>
+                    <div className="flex items-center gap-1">
+                      <span className="font-bold">{tc.tipoAnimal}</span>
+                      {esNuevo && <Badge variant="outline" className="text-xs bg-blue-100">NUEVO</Badge>}
+                    </div>
+                    <div className="text-center font-mono">{tc.cantidadDTE}</div>
+                    <div className="text-center">
+                      <Input
+                        type="number"
+                        value={tc.cantidadConfirmada}
+                        onChange={(e) => setCantidadConfirmada(tc.tipoAnimal, parseInt(e.target.value) || 0)}
+                        className="w-16 text-center mx-auto h-8"
+                        min="0"
+                      />
+                    </div>
+                    <div className="flex items-center justify-center gap-1">
+                      <Button variant="outline" size="sm" onClick={() => ajustarCantidadConfirmada(tc.tipoAnimal, -1)} disabled={tc.cantidadConfirmada <= 0} className="h-7 w-7 p-0">
+                        <Minus className="w-3 h-3" />
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => ajustarCantidadConfirmada(tc.tipoAnimal, 1)} className="h-7 w-7 p-0">
+                        <Plus className="w-3 h-3" />
+                      </Button>
+                      {esNuevo && (
+                        <Button variant="ghost" size="sm" onClick={() => eliminarTipo(tc.tipoAnimal)} className="h-7 w-7 p-0 text-red-500">
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Totales */}
+            <div className="flex justify-between items-center p-3 bg-stone-50 rounded-lg text-sm">
+              <div>
+                <span className="text-stone-500">Total DTE: </span>
+                <span className="font-bold">{totalDTE}</span>
+              </div>
+              <ArrowRight className="w-4 h-4 text-stone-400" />
+              <div>
+                <span className="text-stone-500">Total Confirmado: </span>
+                <span className={`font-bold ${totalConfirmados !== totalDTE ? 'text-amber-600' : 'text-green-600'}`}>
+                  {totalConfirmados}
+                </span>
+              </div>
+            </div>
+
+            {/* Corral */}
+            <div>
+              <Label className="text-sm font-semibold">Corral de Destino *</Label>
+              <Select value={corralDestinoId} onValueChange={setCorralDestinoId}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Seleccione corral..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {corrales.map((c) => {
+                    const stockActual = tropaSeleccionada?.especie === 'BOVINO' ? c.stockBovinos : c.stockEquinos
+                    const disponible = c.capacidad - stockActual
+                    return (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.nombre} - Disp: {disponible}
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Agregar tipo nuevo */}
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <Label className="text-xs font-semibold text-blue-800">Agregar tipo no declarado</Label>
+              <div className="flex gap-2 mt-1">
+                <Select value={nuevoTipoSeleccionado} onValueChange={setNuevoTipoSeleccionado}>
+                  <SelectTrigger className="flex-1 h-8">
+                    <SelectValue placeholder="Tipo..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TIPOS_ANIMALES[tropaSeleccionada?.especie || 'BOVINO']
+                      ?.filter(t => !tiposConfirmados.some(tc => tc.tipoAnimal === t.codigo))
+                      .map(t => (
+                        <SelectItem key={t.codigo} value={t.codigo}>{t.codigo} - {t.label}</SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <Button onClick={agregarNuevoTipo} disabled={!nuevoTipoSeleccionado} size="sm" className="bg-blue-600 text-white h-8">
+                  <Plus className="w-3 h-3" />
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setValidacionDialogOpen(false); setTropaSeleccionada(null); }} size="sm">
+              Cancelar
+            </Button>
+            <Button onClick={handleConfirmarValidacion} disabled={totalConfirmados === 0 || !corralDestinoId} className="bg-green-600" size="sm">
+              <CheckCircle className="w-4 h-4 mr-1" /> Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Edit Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>Editar Animal #{editingAnimal?.numero}</DialogTitle>
-            <DialogDescription>Modifique los datos del animal</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Caravana</Label>
-              <Input value={editCaravana} onChange={(e) => setEditCaravana(e.target.value.toUpperCase())} />
+          <div className="space-y-3 py-2">
+            <div>
+              <Label className="text-xs">Caravana</Label>
+              <Input value={editCaravana} onChange={(e) => setEditCaravana(e.target.value.toUpperCase())} className="mt-1" />
             </div>
-            <div className="space-y-2">
-              <Label>Tipo de Animal</Label>
+            <div>
+              <Label className="text-xs">Tipo</Label>
               <Select value={editTipoAnimal} onValueChange={setEditTipoAnimal}>
-                <SelectTrigger>
+                <SelectTrigger className="mt-1">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {tiposAnimalActuales.map((t) => (
+                  {TIPOS_ANIMALES[tropaSeleccionada?.especie || 'BOVINO']?.map((t) => (
                     <SelectItem key={t.codigo} value={t.codigo}>{t.codigo} - {t.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Raza</Label>
+            <div>
+              <Label className="text-xs">Peso (kg)</Label>
+              <Input type="number" value={editPeso} onChange={(e) => setEditPeso(e.target.value)} className="mt-1" />
+            </div>
+            <div>
+              <Label className="text-xs">Raza</Label>
               <Select value={editRaza} onValueChange={setEditRaza}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Sin raza" />
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Sin definir" />
                 </SelectTrigger>
                 <SelectContent>
                   {razasActuales.map((r) => (
@@ -1092,67 +1134,13 @@ export function PesajeIndividualModule({ tropas: propTropas, operador }: { tropa
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-2">
-              <Label>Peso (kg)</Label>
-              <Input type="number" value={editPeso} onChange={(e) => setEditPeso(e.target.value)} />
-            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditDialogOpen(false)}>Cancelar</Button>
-            <Button onClick={handleSaveEdit} className="bg-amber-500 hover:bg-amber-600">Guardar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Rotulo Preview Dialog - SOLO 4 DATOS CLAVE */}
-      <Dialog open={showRotuloPreview} onOpenChange={setShowRotuloPreview}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Vista Previa del Rótulo</DialogTitle>
-          </DialogHeader>
-          {rotuloPreviewData && (
-            <div className="border-4 border-black p-4 rounded-lg bg-white">
-              <div className="text-center border-b-2 border-black pb-2 mb-3">
-                <p className="font-bold text-sm">SOLEMAR ALIMENTARIA</p>
-              </div>
-              
-              {/* 4 DATOS CLAVE */}
-              <div className="space-y-2">
-                <div className="flex justify-between items-center border-b border-dashed border-gray-300 pb-2">
-                  <span className="font-bold text-sm">TROPA:</span>
-                  <span className="font-bold text-lg">{tropaSeleccionada?.codigo}</span>
-                </div>
-                
-                <div className="flex justify-between items-center border-b border-dashed border-gray-300 pb-2">
-                  <span className="font-bold text-sm">ANIMAL Nº:</span>
-                  <span className="font-bold text-lg">{rotuloPreviewData.numero}</span>
-                </div>
-                
-                <div className="flex justify-between items-center border-b border-dashed border-gray-300 pb-2">
-                  <span className="font-bold text-sm">FECHA:</span>
-                  <span className="font-bold">{new Date().toLocaleDateString('es-AR')}</span>
-                </div>
-                
-                <div className="text-center py-3 bg-black text-white rounded font-bold text-2xl">
-                  {rotuloPreviewData.pesoVivo?.toLocaleString()} KG
-                </div>
-              </div>
-              
-              <div className="text-center mt-2 font-mono text-sm text-gray-600">
-                *{rotuloPreviewData.codigo}*
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRotuloPreview(false)}>Cerrar</Button>
-            <Button onClick={() => { if (rotuloPreviewData) imprimirRotulo(rotuloPreviewData); setShowRotuloPreview(false); }} className="bg-amber-500 hover:bg-amber-600">
-              <Printer className="w-4 h-4 mr-2" /> Imprimir
-            </Button>
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)} size="sm">Cancelar</Button>
+            <Button onClick={handleSaveEdit} size="sm">Guardar</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
   )
 }
-
-export default PesajeIndividualModule

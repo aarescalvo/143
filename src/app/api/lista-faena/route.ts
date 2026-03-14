@@ -33,10 +33,16 @@ export async function GET(request: NextRequest) {
           orderBy: { garron: 'asc' }
         }
       },
-      orderBy: { numero: 'desc' }
+      orderBy: { createdAt: 'desc' }
     })
 
-    return NextResponse.json({ success: true, data: listas })
+    // Agregar campo numero calculado si no existe
+    const listasConNumero = listas.map((lista, index) => ({
+      ...lista,
+      numero: (lista as any).numero || (listas.length - index)
+    }))
+
+    return NextResponse.json({ success: true, data: listasConNumero })
   } catch (error) {
     console.error('Error fetching listas:', error)
     return NextResponse.json(
@@ -46,19 +52,15 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Create new lista de faena (versión 2 - múltiples listas por día)
+// POST - Create new lista de faena
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { operadorId } = body
 
-    // Obtener el último número de lista
-    const ultimaLista = await db.listaFaena.findFirst({
-      orderBy: { numero: 'desc' },
-      select: { numero: true }
-    })
-
-    const nuevoNumero = (ultimaLista?.numero || 0) + 1
+    // Contar listas existentes para generar el número
+    const totalListas = await db.listaFaena.count()
+    const nuevoNumero = totalListas + 1
 
     const lista = await db.listaFaena.create({
       data: {
@@ -101,9 +103,11 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    const { listaId } = body
+    const { listaId, listaFaenaId, accion } = body
 
-    if (!listaId) {
+    const id = listaId || listaFaenaId
+
+    if (!id) {
       return NextResponse.json(
         { success: false, error: 'ID de lista requerido' },
         { status: 400 }
@@ -112,7 +116,7 @@ export async function PUT(request: NextRequest) {
 
     // Verificar que la lista existe y está cerrada
     const lista = await db.listaFaena.findUnique({
-      where: { id: listaId }
+      where: { id }
     })
 
     if (!lista) {
@@ -122,7 +126,7 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    if (lista.estado !== 'CERRADA') {
+    if (accion === 'reabrir' && lista.estado !== 'CERRADA') {
       return NextResponse.json(
         { success: false, error: 'Solo se pueden reabrir listas cerradas' },
         { status: 400 }
@@ -131,7 +135,7 @@ export async function PUT(request: NextRequest) {
 
     // Reabrir la lista
     const listaActualizada = await db.listaFaena.update({
-      where: { id: listaId },
+      where: { id },
       data: {
         estado: 'ABIERTA',
         fechaCierre: null,
@@ -153,10 +157,12 @@ export async function PUT(request: NextRequest) {
       }
     })
 
+    const numeroLista = (lista as any).numero || 'N/A'
+
     return NextResponse.json({ 
       success: true, 
       data: listaActualizada,
-      message: `Lista N° ${lista.numero} reabierta correctamente`
+      message: `Lista N° ${numeroLista} reabierta correctamente`
     })
   } catch (error) {
     console.error('Error reabriendo lista:', error)

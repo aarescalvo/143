@@ -60,11 +60,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - Asignar garrón a un animal
+// POST - Asignar garrón a un animal (con transacción para multi-usuario)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { garron, animalId, operadorId } = body
+    const { garron, animalId, operadorId, listaFaenaId } = body
 
     if (!garron) {
       return NextResponse.json(
@@ -77,83 +77,96 @@ export async function POST(request: NextRequest) {
     const hoy = new Date()
     hoy.setHours(0, 0, 0, 0)
 
-    const existente = await db.asignacionGarron.findFirst({
-      where: {
-        garron,
-        horaIngreso: {
-          gte: hoy,
-          lt: new Date(hoy.getTime() + 24 * 60 * 60 * 1000)
-        }
-      }
-    })
-
-    if (existente) {
-      return NextResponse.json(
-        { success: false, error: 'El garrón ya está asignado' },
-        { status: 400 }
-      )
-    }
-
-    // Obtener datos del animal si se proporcionó
-    let animalData = null
-    if (animalId) {
-      const animal = await db.animal.findUnique({
-        where: { id: animalId },
-        include: {
-          tropa: true,
-          pesajeIndividual: true
+    // USAR TRANSACCIÓN para evitar race conditions en multi-usuario
+    const result = await db.$transaction(async (tx) => {
+      // Check si el garrón ya existe (dentro de la transacción)
+      const existente = await tx.asignacionGarron.findFirst({
+        where: {
+          garron,
+          horaIngreso: {
+            gte: hoy,
+            lt: new Date(hoy.getTime() + 24 * 60 * 60 * 1000)
+          }
         }
       })
-      
-      if (animal) {
-        animalData = {
-          id: animal.id,
-          codigo: animal.codigo,
-          tropaCodigo: animal.tropa?.codigo,
-          tipoAnimal: animal.tipoAnimal?.toString(),
-          pesoVivo: animal.pesoVivo || animal.pesajeIndividual?.peso,
-          numero: animal.numero
+
+      if (existente) {
+        throw new Error('GARRON_YA_ASIGNADO')
+      }
+
+      // Obtener datos del animal si se proporcionó
+      let animalData = null
+      if (animalId) {
+        const animal = await tx.animal.findUnique({
+          where: { id: animalId },
+          include: {
+            tropa: true,
+            pesajeIndividual: true
+          }
+        })
+        
+        if (animal) {
+          animalData = {
+            id: animal.id,
+            codigo: animal.codigo,
+            tropaCodigo: animal.tropa?.codigo,
+            tipoAnimal: animal.tipoAnimal?.toString(),
+            pesoVivo: animal.pesoVivo || animal.pesajeIndividual?.peso,
+            numero: animal.numero
+          }
         }
       }
-    }
 
-    // Crear asignación
-    const asignacion = await db.asignacionGarron.create({
-      data: {
-        garron,
-        animalId: animalId || null,
-        tropaCodigo: animalData?.tropaCodigo || null,
-        animalNumero: animalData?.numero || null,
-        tipoAnimal: animalData?.tipoAnimal || null,
-        pesoVivo: animalData?.pesoVivo || null,
-        operadorId: operadorId || null,
-        tieneMediaDer: false,
-        tieneMediaIzq: false,
-        completado: false,
-        horaIngreso: new Date()
-      }
-    })
-
-    // Si hay animal asignado, actualizar su estado
-    if (animalId) {
-      await db.animal.update({
-        where: { id: animalId },
-        data: { estado: 'EN_FAENA' }
+      // Crear asignación
+      const asignacion = await tx.asignacionGarron.create({
+        data: {
+          garron,
+          animalId: animalId || null,
+          listaFaenaId: listaFaenaId || null,
+          tropaCodigo: animalData?.tropaCodigo || null,
+          animalNumero: animalData?.numero || null,
+          tipoAnimal: animalData?.tipoAnimal || null,
+          pesoVivo: animalData?.pesoVivo || null,
+          operadorId: operadorId || null,
+          tieneMediaDer: false,
+          tieneMediaIzq: false,
+          completado: false,
+          horaIngreso: new Date()
+        }
       })
-    }
+
+      // Si hay animal asignado, actualizar su estado
+      if (animalId) {
+        await tx.animal.update({
+          where: { id: animalId },
+          data: { estado: 'EN_FAENA' }
+        })
+      }
+
+      return { asignacion, animalData }
+    })
 
     return NextResponse.json({
       success: true,
       data: {
-        id: asignacion.id,
-        garron: asignacion.garron,
-        animalId: asignacion.animalId,
-        animalCodigo: animalData?.codigo || null
+        id: result.asignacion.id,
+        garron: result.asignacion.garron,
+        animalId: result.asignacion.animalId,
+        animalCodigo: result.animalData?.codigo || null
       }
     })
 
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Error asignando garrón:', error)
+    
+    // Manejar error específico de garrón ya asignado
+    if (error instanceof Error && error.message === 'GARRON_YA_ASIGNADO') {
+      return NextResponse.json(
+        { success: false, error: 'El garrón ya está asignado por otro usuario' },
+        { status: 409 } // Conflict
+      )
+    }
+    
     return NextResponse.json(
       { success: false, error: 'Error al asignar garrón' },
       { status: 500 }
