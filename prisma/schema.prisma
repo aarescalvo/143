@@ -1340,3 +1340,136 @@ enum PrioridadReclamo {
   URGENTE         // Urgente, atención inmediata
 }
 
+// ==================== SISTEMA DE EMAILS ====================
+
+model DestinatarioReporte {
+  id              String   @id @default(cuid())
+  nombre          String                    // Nombre del destinatario
+  email           String                    // Dirección de email
+  activo          Boolean  @default(true)   // Si está activo para recibir emails
+  
+  // Tipos de reportes que recibe
+  recibeStock     Boolean  @default(false)  // Reportes de stock
+  recibeFaena     Boolean  @default(false)  // Reportes de faena diaria
+  recibeRendimiento Boolean @default(false) // Reportes de rendimiento
+  recibeAlertas   Boolean  @default(false)  // Alertas del sistema
+  
+  observaciones   String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  historialesEnvio HistorialEnvio[]
+  
+  @@index([email])
+  @@index([activo])
+}
+
+model ProgramacionReporte {
+  id              String   @id @default(cuid())
+  nombre          String                    // Nombre de la programación
+  
+  // Tipo de reporte
+  tipoReporte     TipoReporteEmail
+  
+  // Configuración de envío
+  frecuencia      FrecuenciaEmail
+  horaEnvio       Int      @default(8)      // Hora del día (0-23)
+  diaSemana       Int?                      // Día de la semana (0=Domingo, 6=Sábado) para semanal
+  diaMes          Int?                      // Día del mes (1-31) para mensual
+  
+  // Destinatarios (lista de IDs separados por coma o JSON)
+  destinatarios   String                    // IDs de DestinatarioReporte separados por coma
+  
+  // Estado
+  activo          Boolean  @default(true)
+  ultimoEnvio     DateTime?
+  proximoEnvio    DateTime?
+  
+  // Configuración adicional
+  incluirGraficos Boolean @default(true)
+  formato         FormatoReporte @default(PDF)
+  
+  observaciones   String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  historialesEnvio HistorialEnvio[]
+  
+  @@index([tipoReporte])
+  @@index([activo])
+  @@index([proximoEnvio])
+}
+
+model HistorialEnvio {
+  id                    String   @id @default(cuid())
+  
+  // Referencias
+  programacionId        String?
+  programacion          ProgramacionReporte? @relation(fields: [programacionId], references: [id])
+  destinatarioId        String?
+  destinatario          DestinatarioReporte? @relation(fields: [destinatarioId], references: [id])
+  
+  // Datos del envío
+  tipoReporte           TipoReporteEmail
+  asunto                String
+  destinatarioEmail     String                    // Email del destinatario (denormalizado)
+  
+  // Estado del envío
+  estado                EstadoEnvioEmail @default(PENDIENTE)
+  fechaEnvio            DateTime @default(now())
+  fechaProcesado        DateTime?
+  
+  // Información adicional
+  error                 String?                   // Mensaje de error si falló
+  reintentos            Int      @default(0)
+  tamanoArchivo         Int?                      // Tamaño del archivo adjunto en bytes
+  
+  // Contenido
+  contenidoResumen      String?                   // Resumen del contenido enviado
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  @@index([tipoReporte])
+  @@index([estado])
+  @@index([fechaEnvio])
+  @@index([destinatarioEmail])
+}
+
+enum TipoReporteEmail {
+  STOCK_DIARIO          // Reporte de stock diario
+  STOCK_SEMANAL         // Reporte de stock semanal
+  FAENA_DIARIO          // Reporte de faena diario
+  FAENA_SEMANAL         // Reporte de faena semanal
+  RENDIMIENTO_DIARIO    // Reporte de rendimiento diario
+  RENDIMIENTO_SEMANAL   // Reporte de rendimiento semanal
+  ALERTA_STOCK_BAJO     // Alerta de stock bajo
+  ALERTA_CAMARA         // Alerta de capacidad de cámara
+  RESUMEN_MENSUAL       // Resumen mensual completo
+  PERSONALIZADO         // Reporte personalizado
+}
+
+enum FrecuenciaEmail {
+  DIARIO                // Todos los días
+  SEMANAL               // Una vez por semana
+  QUINCENAL             // Cada 15 días
+  MENSUAL               // Una vez por mes
+  MANUAL                // Solo envío manual
+}
+
+enum EstadoEnvioEmail {
+  PENDIENTE             // Pendiente de envío
+  ENVIANDO              // En proceso de envío
+  ENVIADO               // Enviado exitosamente
+  ERROR                 // Error en el envío
+  REINTENTO             // Pendiente de reintento
+}
+
+enum FormatoReporte {
+  PDF                   // Formato PDF
+  EXCEL                 // Formato Excel
+  AMBOS                 // Ambos formatos
+}
+
