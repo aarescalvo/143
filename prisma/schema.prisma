@@ -48,6 +48,7 @@ model Corral {
   movimientosOrigen   MovimientoCorral[]  @relation("CorralOrigen")
   movimientosDestino  MovimientoCorral[]  @relation("CorralDestino")
   tropas              Tropa[]
+  listaFaenaTropas    ListaFaenaTropa[]
 }
 
 // ==================== CÁMARAS ====================
@@ -582,12 +583,13 @@ model PesajeIndividual {
 
 model ListaFaena {
   id            String          @id @default(cuid())
-  fecha         DateTime        @default(now())  // Una por día
+  numero        Int             @unique          // Número correlativo de lista (1, 2, 3...)
+  fecha         DateTime        @default(now())
   estado        EstadoListaFaena @default(ABIERTA)
   
   cantidadTotal Int             @default(0)
   
-  supervisorId  String?         // Quien cierra la lista
+  supervisorId  String?
   supervisor    Operador?       @relation(fields: [supervisorId], references: [id])
   fechaCierre   DateTime?
   
@@ -601,6 +603,7 @@ model ListaFaena {
   
   @@index([fecha])
   @@index([estado])
+  @@index([numero])
 }
 
 model ListaFaenaTropa {
@@ -611,12 +614,16 @@ model ListaFaenaTropa {
   tropaId       String
   tropa         Tropa    @relation(fields: [tropaId], references: [id])
   
+  corralId      String?              // Corral del cual se toman los animales
+  corral        Corral?   @relation(fields: [corralId], references: [id])
+  
   cantidad      Int      // Cantidad de animales de esta tropa a faenar
   
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   
-  @@unique([listaFaenaId, tropaId])
+  @@unique([listaFaenaId, tropaId, corralId])
+  @@index([corralId])
 }
 
 enum EstadoListaFaena {

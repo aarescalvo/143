@@ -50,13 +50,14 @@ interface AnimalLista {
 
 interface ListaFaena {
   id: string
+  numero: number
   fecha: string
   estado: string
   cantidadTotal: number
   supervisor?: { nombre: string }
   fechaCierre?: string
   observaciones?: string
-  tropas?: { tropa: Tropa; cantidad: number }[]
+  tropas?: { tropa: Tropa; cantidad: number; corral?: { nombre: string } }[]
 }
 
 interface Operador {
@@ -137,7 +138,7 @@ export function ListaFaenaModule({ operador }: { operador: Operador }) {
 
       const data = await res.json()
       if (data.success) {
-        toast.success('Lista de faena creada')
+        toast.success(`Lista de Faena N° ${data.data.numero} creada`)
         setNuevaListaOpen(false)
         fetchData()
       } else {
@@ -234,6 +235,97 @@ export function ListaFaenaModule({ operador }: { operador: Operador }) {
         {est?.label || estado}
       </Badge>
     )
+  }
+
+  // Función de impresión de lista de faena
+  const handleImprimirLista = (lista: ListaFaena) => {
+    const fecha = new Date(lista.fecha).toLocaleDateString('es-AR')
+    const fechaCierre = lista.fechaCierre ? new Date(lista.fechaCierre).toLocaleString('es-AR') : '-'
+    
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Lista de Faena N° ${lista.numero}</title>
+        <style>
+          body { font-family: Arial, sans-serif; padding: 20px; }
+          .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 15px; }
+          .title { font-size: 24px; font-weight: bold; }
+          .subtitle { font-size: 14px; color: #666; }
+          .info { display: flex; justify-content: space-between; margin-bottom: 20px; }
+          .info-item { margin-bottom: 5px; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+          th, td { border: 1px solid #333; padding: 8px; text-align: left; }
+          th { background-color: #f0f0f0; }
+          .total { font-weight: bold; font-size: 16px; margin-bottom: 30px; }
+          .firmas { display: flex; justify-content: space-between; margin-top: 50px; }
+          .firma-box { width: 200px; text-align: center; }
+          .firma-line { border-top: 1px solid #333; margin-top: 60px; padding-top: 5px; }
+          @media print { body { margin: 0; } }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="title">LISTA DE FAENA N° ${lista.numero}</div>
+          <div class="subtitle">Solemar Alimentaria S.A.</div>
+        </div>
+        
+        <div class="info">
+          <div>
+            <div class="info-item"><strong>Fecha:</strong> ${fecha}</div>
+            <div class="info-item"><strong>Estado:</strong> ${lista.estado}</div>
+            <div class="info-item"><strong>Cantidad Total:</strong> ${lista.cantidadTotal} animales</div>
+          </div>
+          <div>
+            <div class="info-item"><strong>Supervisor:</strong> ${lista.supervisor?.nombre || '-'}</div>
+            <div class="info-item"><strong>Fecha Cierre:</strong> ${fechaCierre}</div>
+          </div>
+        </div>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Tropa</th>
+              <th>Usuario Faena</th>
+              <th>Cantidad</th>
+              <th>Corral</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${lista.tropas?.map((t, i) => `
+              <tr>
+                <td>${i + 1}</td>
+                <td>${t.tropa?.codigo || '-'}</td>
+                <td>${t.tropa?.usuarioFaena?.nombre || '-'}</td>
+                <td>${t.cantidad}</td>
+                <td>${t.corral?.nombre || '-'}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="5">Sin tropas</td></tr>'}
+          </tbody>
+        </table>
+        
+        <div class="total">Total de animales: ${lista.cantidadTotal}</div>
+        
+        <div class="firmas">
+          <div class="firma-box">
+            <div class="firma-line">Solicitante</div>
+          </div>
+          <div class="firma-box">
+            <div class="firma-line">Supervisor SENASA</div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `
+    
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      printWindow.document.write(printContent)
+      printWindow.document.close()
+      printWindow.print()
+    }
   }
 
   // Calcular estadísticas

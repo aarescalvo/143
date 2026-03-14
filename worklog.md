@@ -207,3 +207,58 @@ Stage Summary:
 - Sistema funcionando correctamente
 - Listas de faena con numeración automática
 
+
+---
+Task ID: 77
+Agent: main
+Task: Restaurar funcionalidades perdidas por force push
+
+Work Log:
+- **Problema identificado**:
+  * Force push de Task 76 sobrescribió commits previos
+  * Se perdieron cambios de Tasks 65-73
+  * Campo `numero` faltaba en ListaFaena
+  * Campo `corralId` faltaba en ListaFaenaTropa
+  * Función de impresión faltaba en lista-faena
+
+- **Cambios restaurados en schema**:
+  1. `ListaFaena.numero` - Número correlativo único (1, 2, 3...)
+  2. `ListaFaenaTropa.corralId` - Corral de donde se toman animales
+  3. `ListaFaenaTropa.corral` - Relación con modelo Corral
+  4. `Corral.listaFaenaTropas` - Relación inversa
+
+- **APIs restauradas**:
+  1. `/api/lista-faena/route.ts`:
+     - Campo numero calculado automáticamente al crear
+     - Múltiples listas por día permitidas
+     - Ordenado por numero descendente
+  
+  2. `/api/tropas/stock-corrales/route.ts`:
+     - Calcula stock disponible por tropa+corral
+     - Descuenta animales en listas abiertas
+     - Descuenta animales faenados
+
+- **Componente lista-faena actualizado**:
+  * Interface ListaFaena con campo `numero`
+  * Interface ListaFaenaTropa con campo `corral`
+  * Función `handleImprimirLista()` agregada
+  * Impresión incluye:
+    - Número de lista correlativo
+    - Fecha y estado
+    - Tabla de tropas con corral
+    - Total de animales
+    - Firmas: Solicitante y Supervisor SENASA
+
+- **Base de datos**:
+  * Ejecutado `prisma db push --force-reset`
+  * Ejecutado `bun run db:seed`
+  * Datos de prueba restaurados
+
+Stage Summary:
+- Funcionalidades de lista de faena restauradas
+- Numeración correlativa implementada
+- Impresión con firmas funcionando
+- Stock por corral operativo
+- Módulo ingreso a cajón verificado
+- Listo para subir a GitHub
+
