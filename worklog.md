@@ -423,3 +423,41 @@ Corregir Stock por Corrales y Lista de Faena
 - **Lista de Faena funcionando**: El campo `numero` está sincronizado y las listas se pueden crear correctamente
 - El sistema está operativo con las correcciones aplicadas
 
+---
+## Task ID: 81
+### Work Task
+Corregir errores adicionales: Stock Corrales y Lista de Faena
+
+### Work Log:
+- **Problema 1 - Stock Corrales (movimiento-hacienda)**:
+  * El componente `movimiento-hacienda-module.tsx` usa la API `/api/corrales`
+  * La API contaba tropas con `tropa.corralId` en lugar de animales individuales
+  * No se veían las tropas dentro de los cuadros de cada corral
+  * **Solución**: API `/api/corrales` reescrita para:
+    - Consultar animales con `estado: ['RECIBIDO', 'PESADO']`
+    - Agrupar por `animal.corralId` (ubicación real del animal)
+    - Mostrar tropas con cantidad de animales en cada corral
+    - Agregar sección "Sin Asignar" para animales sin corral
+
+- **Problema 2 - Lista de Faena**:
+  * Error al crear lista: `PrismaClientValidationError`
+  * El campo `numero` es `@unique` en el schema
+  * Usar `count()` para generar número causaba conflictos si había listas eliminadas
+  * **Solución**: Cambiado a `findFirst({ orderBy: { numero: 'desc' } })`
+  * Ahora obtiene el máximo número existente y suma 1
+
+- **Problema 3 - React Key Warning**:
+  * Warning: "Each child in a list should have a unique key prop"
+  * En `movimiento-hacienda-module.tsx` línea 377
+  * **Solución**: Cambiado `key={tropa.tropaId}` a `key={\`${corral.id}-${tropa.tropaId}\`}`
+
+### Verificaciones:
+- Lint: Sin errores ✓
+- Git push: Exitoso (sin force push) ✓
+
+### Stage Summary:
+- **Stock Corrales**: Ahora muestra correctamente las tropas dentro de cada corral
+- **Lista de Faena**: Se puede crear sin errores
+- **Warning React**: Corregido
+- Cambios subidos a GitHub: `ed9faba..ab3ff80`
+
