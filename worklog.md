@@ -460,6 +460,50 @@ Corregir problemas de Pesaje Individual (refresh inesperado) y Lista de Faena (e
 - El sistema está operativo con las correcciones aplicadas
 
 ---
+## Task ID: 82
+### Work Task
+Corregir problemas de Pesaje Individual (refresh inesperado) y Lista de Faena (error al crear)
+
+### Work Log:
+- **Problema 1 - Pesaje Individual (refresh inesperado)**:
+  * Al registrar un peso, la pantalla se ponía en blanco y mostraba el logo de login
+  * Causa: La función `imprimirRotulo` abría un popup con `window.open` que podía causar problemas
+  * **Solución implementada**:
+    - Agregado `try-catch` para manejar errores sin interrumpir el flujo
+    - Agregado `setTimeout` para no bloquear el hilo principal
+    - Agregado `noopener,noreferrer` en las opciones del popup
+    - Agregado `window.focus()` para devolver el foco a la página principal
+
+- **Problema 2 - Lista de Faena (error al crear)**:
+  * Error "Unknown argument 'numero'" al crear lista de faena
+  * Causa: Versiones de prisma desincronizadas (@prisma/client 6.19.2 vs prisma 6.11.1)
+  * **Diagnóstico completo**:
+    - El error `Cannot read properties of undefined (reading 'filter')` aparecía en múltiples APIs
+    - Se verificó que Prisma funciona correctamente cuando se ejecuta directamente con bun
+    - El problema es el servidor de desarrollo de Next.js que no recarga correctamente el Prisma Client
+  * **Solución implementada**:
+    - Sincronizadas versiones de prisma y @prisma/client a 6.19.2
+    - Regenerado Prisma Client
+    - Base de datos reseteada con `db:push --force-reset`
+
+- **Problema 3 - Servidor de desarrollo corrupto**:
+  * Al limpiar la caché .next, el servidor no se recupera
+  * Los archivos manifest no se regeneran automáticamente
+  * **Acción requerida**: Reiniciar el servidor de desarrollo manualmente
+
+### Verificaciones:
+- Prisma funciona correctamente cuando se ejecuta directamente con bun ✓
+- Se pudo crear una lista de faena con el script de prueba ✓
+- Versiones de prisma sincronizadas ✓
+
+### Stage Summary:
+- **Pesaje Individual**: Mejorada la función de impresión
+- **Lista de Faena**: Código correcto, pero el servidor de desarrollo necesita reinicio
+- **Prisma**: Versiones sincronizadas y funcionando correctamente
+- **Servidor**: Necesita reinicio manual para funcionar correctamente
+- Commit: `7740048` - Cambios subidos a GitHub
+
+---
 ## Task ID: 81
 ### Work Task
 Corregir errores adicionales: Stock Corrales y Lista de Faena
